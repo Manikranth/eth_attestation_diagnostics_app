@@ -1,0 +1,187 @@
+# Vector: tail Lighthouse beacon + validator-client debug logs, parse every
+# per-slot operational event, ship to ClickHouse attmon.node_events.
+# File-based only — no beacon API calls.
+
+data_dir: /var/lib/vector
+
+sources:
+  beacon_log:
+    type: file
+    include:
+      - /var/log/lighthouse/beacon.log
+    read_from: beginning   # ship existing log history so it joins backfilled epochs
+
+  vc_log:
+    type: file
+    include:
+      - /var/log/lighthouse-vc/validator.log
+    read_from: beginning
+
+transforms:
+  beacon_events:
+    type: remap
+    inputs: [beacon_log]
+    drop_on_abort: true
+    source: |
+      raw = string!(.message)
+
+      # --- shared helpers -------------------------------------------------
+      # Log lines carry no year; borrow it from the wall clock. Timestamps
+      # in these files are UTC.
+      ts_m = parse_regex(raw, r'^(?P<v>\w+ +\d+ +[0-9:.]+)') ?? {}
+      if !is_string(ts_m.v) { abort }
+      year = format_timestamp!(now(), "%Y")
+      parsed_ts = parse_timestamp(year + " " + string!(ts_m.v) + " +0000", "%Y %b %d %H:%M:%S%.3f %z") ?? now()
+
+      slot_m  = parse_regex(raw, r'slot: (?:Slot\()?(?P<v>\d+)') ?? {}
+      root_m  = parse_regex(raw, r'(?:^|[ ,])(?:block_root|root|block): (?P<v>0x[0-9a-fA-F]+)') ?? {}
+      slot_v  = if is_string(slot_m.v) { to_int(slot_m.v) ?? null } else { null }
+      root_v  = if is_string(root_m.v) { string!(root_m.v) } else { "" }
+
+      out = {
+        "ts": format_timestamp!(parsed_ts, "%Y-%m-%d %H:%M:%S%.3f"),
+        "src": "beacon",
+        "slot": slot_v,
+        "block_root": root_v
+      }
+
+      if contains(raw, "Slot timer") {
+        peers_m = parse_regex(raw, r'peers: "?(?P<v>\d+)"?') ?? {}
+        head_m  = parse_regex(raw, r'head_slot: (?P<v>\d+)') ?? {}
+        cur_m   = parse_regex(raw, r'current_slot: (?P<v>\d+)') ?? {}
+        sync_m  = parse_regex(raw, r'sync_state: (?P<v>.+)$') ?? {}
+        out.event = "slot_timer"
+        out.peers = if is_string(peers_m.v) { to_int(peers_m.v) ?? null } else { null }
+        out.head_slot = if is_string(head_m.v) { to_int(head_m.v) ?? null } else { null }
+        out.current_slot = if is_string(cur_m.v) { to_int(cur_m.v) ?? null } else { null }
+        out.sync_state = if is_string(sync_m.v) { string!(sync_m.v) } else { "" }
+        out.slot = out.current_slot
+      } else if contains(raw, "Successfully verified gossip block") {
+        out.event = "gossip_verified"
+      } else if contains(raw, "New block received") {
+        out.event = "new_block"
+      } else if contains(raw, "Gossip block arrived late") {
+        prop_m  = parse_regex(raw, r'proposer_index: (?P<v>\d+)') ?? {}
+        delay_m = parse_regex(raw, r'block_delay: (?P<num>[0-9.]+)(?P<unit>m?s)') ?? {}
+        out.event = "gossip_late"
+        out.proposer_index = if is_string(prop_m.v) { to_int(prop_m.v) ?? null } else { null }
+        if is_string(delay_m.num) {
+          d = to_float!(delay_m.num)
+          if delay_m.unit == "ms" { d = d / 1000.0 }
+          out.delay_s = d
+        }
+      } else if contains(raw, "Beacon block imported") {
+        src_m = parse_regex(raw, r'block_source: (?P<v>\w+)') ?? {}
+        out.event = "block_imported"
+        out.detail = if is_string(src_m.v) { string!(src_m.v) } else { "" }
+      } else if contains(raw, "Delayed head block") {
+        prop_m = parse_regex(raw, r'proposer_index: (?P<v>\d+)') ?? {}
+        out.event = "delayed_head"
+        out.proposer_index = if is_string(prop_m.v) { to_int(prop_m.v) ?? null } else { null }
+        m = parse_regex(raw, r'[^_]observed_delay_ms: "?(?P<v>[0-9]+)"?') ?? {}
+        if is_string(m.v) { out.observed_delay_ms = to_float(m.v) ?? null }
+        m = parse_regex(raw, r'blob_delay_ms: "?(?P<v>[0-9]+)"?') ?? {}
+        if is_string(m.v) { out.blob_delay_ms = to_float(m.v) ?? null }
+        m = parse_regex(raw, r'consensus_time_ms: "?(?P<v>[0-9]+)"?') ?? {}
+        if is_string(m.v) { out.consensus_time_ms = to_float(m.v) ?? null }
+        m = parse_regex(raw, r'execution_time_ms: "?(?P<v>[0-9]+)"?') ?? {}
+        if is_string(m.v) { out.execution_time_ms = to_float(m.v) ?? null }
+        m = parse_regex(raw, r'available_delay_ms: "?(?P<v>[0-9]+)"?') ?? {}
+        if is_string(m.v) { out.available_delay_ms = to_float(m.v) ?? null }
+        m = parse_regex(raw, r'attestable_delay_ms: "?(?P<v>[0-9]+)"?') ?? {}
+        if is_string(m.v) { out.attestable_delay_ms = to_float(m.v) ?? null }
+        m = parse_regex(raw, r'imported_time_ms: "?(?P<v>[0-9]+)"?') ?? {}
+        if is_string(m.v) { out.imported_time_ms = to_float(m.v) ?? null }
+        m = parse_regex(raw, r'set_as_head_time_ms: "?(?P<v>[0-9]+)"?') ?? {}
+        if is_string(m.v) { out.set_as_head_time_ms = to_float(m.v) ?? null }
+        m = parse_regex(raw, r'total_delay_ms: "?(?P<v>[0-9]+)"?') ?? {}
+        if is_string(m.v) { out.total_delay_ms = to_float(m.v) ?? null }
+      } else if contains(raw, "Triggering getBlobs") {
+        out.event = "getblobs_trigger"
+      } else if contains(raw, "Fetching blobs from the EL") {
+        n_m = parse_regex(raw, r'num_expected_blobs: (?P<v>\d+)') ?? {}
+        out.event = "blobs_fetch_el"
+        out.num_expected = if is_string(n_m.v) { to_int(n_m.v) ?? null } else { null }
+      } else if contains(raw, "Blobs partially received from the EL") || contains(raw, "Blobs received from the EL") {
+        f_m = parse_regex(raw, r'num_fetched_blobs: (?P<v>\d+)') ?? {}
+        e_m = parse_regex(raw, r'num_expected_blobs: (?P<v>\d+)') ?? {}
+        out.event = "blobs_recv_el"
+        out.num_fetched = if is_string(f_m.v) { to_int(f_m.v) ?? null } else { null }
+        out.num_expected = if is_string(e_m.v) { to_int(e_m.v) ?? null } else { null }
+      } else if contains(raw, "Gossip partial data column already processed via the EL") {
+        out.event = "col_via_el"
+      } else if contains(raw, "Writing data columns to store") {
+        c_m = parse_regex(raw, r'count: (?P<v>\d+)') ?? {}
+        out.event = "cols_stored"
+        out.count = if is_string(c_m.v) { to_int(c_m.v) ?? null } else { null }
+      } else if contains(raw, "Publishing all partials") {
+        c_m = parse_regex(raw, r'count: (?P<v>\d+)') ?? {}
+        out.event = "partials_published"
+        out.count = if is_string(c_m.v) { to_int(c_m.v) ?? null } else { null }
+      } else {
+        abort
+      }
+
+      . = out
+
+  vc_events:
+    type: remap
+    inputs: [vc_log]
+    drop_on_abort: true
+    source: |
+      raw = string!(.message)
+
+      ts_m = parse_regex(raw, r'^(?P<v>\w+ +\d+ +[0-9:.]+)') ?? {}
+      if !is_string(ts_m.v) { abort }
+      year = format_timestamp!(now(), "%Y")
+      parsed_ts = parse_timestamp(year + " " + string!(ts_m.v) + " +0000", "%Y %b %d %H:%M:%S%.3f %z") ?? now()
+
+      slot_m = parse_regex(raw, r'slot: (?:Slot\()?(?P<v>\d+)') ?? {}
+      slot_v = if is_string(slot_m.v) { to_int(slot_m.v) ?? null } else { null }
+
+      out = {
+        "ts": format_timestamp!(parsed_ts, "%Y-%m-%d %H:%M:%S%.3f"),
+        "src": "validator",
+        "slot": slot_v
+      }
+
+      if contains(raw, "Starting attestation production") {
+        out.event = "att_start"
+      } else if contains(raw, "Successfully published") && contains(raw, "aggregate") {
+        c_m = parse_regex(raw, r'count: (?P<v>\d+)') ?? {}
+        out.event = "agg_published"
+        out.count = if is_string(c_m.v) { to_int(c_m.v) ?? null } else { null }
+        out.detail = slice(raw, 0, 220) ?? raw
+      } else if contains(raw, "Successfully published attestation") {
+        c_m  = parse_regex(raw, r'count: (?P<v>\d+)') ?? {}
+        ci_m = parse_regex(raw, r'committee_index: (?P<v>\d+)') ?? {}
+        out.event = "att_published"
+        out.count = if is_string(c_m.v) { to_int(c_m.v) ?? null } else { null }
+        out.committee_index = if is_string(ci_m.v) { to_int(ci_m.v) ?? null } else { null }
+        out.detail = slice(raw, 0, 220) ?? raw
+      } else if contains(raw, "Failed to spawn attestation tasks") || contains(raw, "Failed to produce attestation data") {
+        out.event = "att_failed"
+        out.detail = slice(raw, 0, 300) ?? raw
+      } else if contains(raw, "Computed attestation selection proofs") {
+        out.event = "selection_proofs"
+        out.detail = slice(raw, 0, 220) ?? raw
+      } else {
+        abort
+      }
+
+      . = out
+
+sinks:
+  clickhouse:
+    type: clickhouse
+    inputs: [beacon_events, vc_events]
+    endpoint: http://clickhouse:8123
+    database: attmon
+    table: node_events
+    skip_unknown_fields: true
+    auth:
+      strategy: basic
+      user: ${CLICKHOUSE_USER:-attmon}
+      password: ${CLICKHOUSE_PASSWORD:-attmon}
+    batch:
+      timeout_secs: 5

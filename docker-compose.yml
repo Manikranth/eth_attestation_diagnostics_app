@@ -1,0 +1,123 @@
+services:
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8
+    container_name: attmon-clickhouse
+    environment:
+      CLICKHOUSE_DB: attmon
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-attmon}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-attmon}
+    volumes:
+      - ./clickhouse/init:/docker-entrypoint-initdb.d:ro
+      - clickhouse_data:/var/lib/clickhouse
+    ports:
+      - "8123:8123"
+    ulimits:
+      nofile: 262144
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8123/ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  indexer:
+    build: ./indexer
+    container_name: attmon-indexer
+    environment:
+      BEACON_URL: http://hoodi-lighthouse:5052
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-attmon}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-attmon}
+      VALIDATOR_INDICES: ${VALIDATOR_INDICES:-1454096}
+      BACKFILL_EPOCHS: ${BACKFILL_EPOCHS:-3}
+      POLL_SECONDS: ${POLL_SECONDS:-60}
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    networks:
+      - default
+      - hoodi
+    restart: unless-stopped
+
+  vector:
+    image: timberio/vector:0.42.0-alpine
+    container_name: attmon-vector
+    environment:
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-attmon}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-attmon}
+    volumes:
+      - ./vector/vector.yaml:/etc/vector/vector.yaml:ro
+      - ${LIGHTHOUSE_LOG_DIR:-/Volumes/geth/hoodi_node/lighthouse/hoodi/beacon/logs}:/var/log/lighthouse:ro
+      - ${VC_LOG_DIR:-/Volumes/geth/hoodi_node/lighthouse/hoodi/validators/logs}:/var/log/lighthouse-vc:ro
+      - vector_data:/var/lib/vector
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # P2P attestation watcher — populates p2p_attestations (propagation delay,
+  # subnet, aggregator pickup) from the beacon node's SSE event stream
+  p2pwatch:
+    build: ./p2p
+    container_name: attmon-p2pwatch
+    environment:
+      BEACON_URL: http://hoodi-lighthouse:5052
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-attmon}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-attmon}
+      VALIDATOR_INDICES: ${VALIDATOR_INDICES:-1454096}
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    networks:
+      - default
+      - hoodi
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    container_name: attmon-prometheus
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - default
+      - hoodi
+    restart: unless-stopped
+
+  # Web dashboard — http://localhost:8080
+  web:
+    build: ./web
+    container_name: attmon-web
+    environment:
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-attmon}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-attmon}
+    ports:
+      - "8080:8080"
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # CLI — run on demand:  docker compose run --rm app --last 5
+  app:
+    build: ./app
+    profiles: ["cli"]
+    environment:
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-attmon}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-attmon}
+      COLUMNS: ${COLUMNS:-170}
+
+volumes:
+  clickhouse_data:
+  vector_data:
+  prometheus_data:
+
+networks:
+  hoodi:
+    external: true
+    name: hoodi_node_default

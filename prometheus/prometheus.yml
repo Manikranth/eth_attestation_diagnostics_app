@@ -1,0 +1,11 @@
+# Scrapes the Lighthouse beacon node metrics endpoint for health data.
+# NOTE: the beacon node must be started with:
+#   --metrics --metrics-address 0.0.0.0 --metrics-port 5054
+# Until then this target shows as DOWN — harmless.
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: lighthouse-beacon
+    static_configs:
+      - targets: ["hoodi-lighthouse:5054"]

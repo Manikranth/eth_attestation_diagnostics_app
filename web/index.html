@@ -1,0 +1,399 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ATTMON — validator attestation diagnostics</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #070b09;
+    --bg-raise: #0d1310;
+    --bg-row: #0a100d;
+    --line: #1c2822;
+    --text: #b8c9c0;
+    --dim: #5d7169;
+    --phosphor: #3dffa0;
+    --amber: #ffb454;
+    --red: #ff5d6c;
+    --cyan: #59d7ff;
+    --glow: 0 0 8px rgba(61, 255, 160, .45);
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12.5px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  header {
+    display: flex; align-items: baseline; gap: 1.6rem; flex-wrap: wrap;
+    padding: 1rem 1.4rem .8rem;
+    border-bottom: 1px solid var(--line);
+    background: var(--bg-raise);
+  }
+  h1 {
+    font-family: "Chakra Petch", sans-serif;
+    font-size: 1.25rem; letter-spacing: .22em; font-weight: 700;
+    color: var(--phosphor); text-shadow: var(--glow);
+  }
+  h1 span { color: var(--dim); text-shadow: none; font-weight: 500; }
+  .meta { color: var(--dim); font-size: .78rem; letter-spacing: .05em; }
+  .meta b { color: var(--text); font-weight: 600; }
+
+  .live {
+    display: inline-flex; align-items: center; gap: .45em;
+    font-size: .78rem; letter-spacing: .12em; color: var(--phosphor);
+  }
+  .live .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--phosphor); box-shadow: var(--glow);
+    animation: pulse 1.6s ease-in-out infinite;
+  }
+  .live.stale { color: var(--amber); }
+  .live.stale .dot { background: var(--amber); animation: none; }
+  .live.err { color: var(--red); }
+  .live.err .dot { background: var(--red); animation: none; }
+  @keyframes pulse { 50% { opacity: .35; } }
+
+  .controls { margin-left: auto; display: flex; gap: .8rem; align-items: center; }
+  select, button {
+    background: var(--bg); color: var(--text);
+    border: 1px solid var(--line); border-radius: 3px;
+    font: inherit; font-size: .78rem; padding: .3em .6em; cursor: pointer;
+  }
+  select:hover, button:hover { border-color: var(--phosphor); color: var(--phosphor); }
+  button.paused { color: var(--amber); border-color: var(--amber); }
+
+  .chips {
+    display: flex; gap: .6rem; flex-wrap: wrap;
+    padding: .7rem 1.4rem;
+    border-bottom: 1px solid var(--line);
+  }
+  .chip {
+    border: 1px solid var(--line); border-radius: 3px;
+    padding: .25em .7em; font-size: .75rem; letter-spacing: .06em;
+    color: var(--dim); background: var(--bg-raise);
+  }
+  .chip b { font-weight: 600; margin-left: .4em; }
+  .chip.ok b { color: var(--phosphor); }
+  .chip.warn b { color: var(--amber); }
+  .chip.bad b { color: var(--red); }
+
+  .tablewrap { flex: 1; overflow: auto; }
+  table { border-collapse: collapse; min-width: 100%; white-space: nowrap; }
+  thead th {
+    position: sticky; background: var(--bg-raise);
+    font-family: "Chakra Petch", sans-serif; font-weight: 500;
+    text-align: right; padding: .45em .6em;
+    border-bottom: 1px solid var(--line);
+    color: var(--dim); font-size: .7rem; letter-spacing: .06em;
+    z-index: 2;
+  }
+  thead tr.groups th {
+    top: 0; text-align: center; color: var(--phosphor);
+    letter-spacing: .2em; font-size: .66rem;
+    border-left: 1px solid var(--line);
+    padding-top: .6em;
+  }
+  thead tr.cols th { top: 2.05em; }
+  tbody td {
+    padding: .36em .6em; text-align: right;
+    border-bottom: 1px solid rgba(28,40,34,.55);
+    font-variant-numeric: tabular-nums;
+  }
+  tbody tr { background: var(--bg-row); }
+  tbody tr:hover { background: #121a15; }
+  tbody tr.fresh { animation: land .9s ease-out; }
+  @keyframes land { from { background: rgba(61,255,160,.14); } }
+
+  td.groupedge, th.groupedge { border-left: 1px solid var(--line); }
+  .ok   { color: var(--phosphor); }
+  .bad  { color: var(--red); }
+  .warn { color: var(--amber); }
+  .dim  { color: var(--dim); }
+
+  .pill {
+    display: inline-block; padding: .1em .55em; border-radius: 2px;
+    font-size: .72rem; letter-spacing: .05em; border: 1px solid;
+  }
+  .pill.perfect            { color: var(--phosphor); border-color: rgba(61,255,160,.4); background: rgba(61,255,160,.07); }
+  .pill.included_late      { color: var(--amber); border-color: rgba(255,180,84,.4); background: rgba(255,180,84,.07); }
+  .pill.partial_success    { color: var(--amber); border-color: rgba(255,180,84,.4); background: rgba(255,180,84,.07); }
+  .pill.aggregator_missed  { color: var(--cyan); border-color: rgba(89,215,255,.4); background: rgba(89,215,255,.07); }
+  .pill.wrong_head_vote, .pill.propagation_too_slow,
+  .pill.node_broadcast_issue, .pill.block_arrived_late,
+  .pill.vc_produce_failed, .pill.no_block_in_slot
+                           { color: var(--red); border-color: rgba(255,93,108,.4); background: rgba(255,93,108,.07); }
+  .pill.unknown            { color: var(--dim); border-color: var(--line); }
+
+  .empty {
+    padding: 3rem; text-align: center; color: var(--dim); letter-spacing: .1em;
+  }
+  footer {
+    padding: .45em 1.4rem; border-top: 1px solid var(--line);
+    color: var(--dim); font-size: .72rem; letter-spacing: .06em;
+    display: flex; gap: 1.5rem;
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>ATTMON<span> // attestation diagnostics</span></h1>
+  <span class="meta">net <b>hoodi</b></span>
+  <span class="meta" id="validators">validator <b>—</b></span>
+  <span class="live" id="live"><span class="dot"></span><span id="livetext">LIVE</span></span>
+  <div class="controls">
+    <label class="meta" for="epochs">epochs</label>
+    <select id="epochs">
+      <option>5</option><option selected>10</option><option>25</option><option>50</option><option>100</option>
+    </select>
+    <button id="pause">❚❚ pause</button>
+  </div>
+</header>
+
+<div class="chips" id="chips"></div>
+
+<div class="tablewrap">
+  <table>
+    <thead>
+      <tr class="groups">
+        <th colspan="4">CHAIN</th>
+        <th colspan="5" class="groupedge">BLOCK @ DUTY SLOT</th>
+        <th colspan="2" class="groupedge">COMMITTEE</th>
+        <th colspan="4" class="groupedge">VOTES</th>
+        <th colspan="5" class="groupedge">INCLUSION</th>
+        <th colspan="10" class="groupedge" title="all times are WALL CLOCK OFFSETS from slot start — parallel work overlaps, they do NOT sum">BLOCK JOURNEY (wall-clock offsets, ms — stages overlap)</th>
+        <th colspan="4" class="groupedge" title="how long each verify/import step itself took — only logged on late blocks">STEP DURATIONS (ms, late blocks only)</th>
+        <th colspan="4" class="groupedge" title="gaps between consecutive offsets above — the only sequential/summable numbers on this row">STAGES (ms, sequential)</th>
+        <th colspan="4" class="groupedge">VALIDATOR CLIENT</th>
+        <th colspan="1" class="groupedge" title="att_published_time minus slot_start — the single end-to-end number">LIFECYCLE</th>
+        <th colspan="4" class="groupedge">NODE</th>
+        <th colspan="2" class="groupedge">P2P</th>
+        <th class="groupedge">VERDICT</th>
+      </tr>
+      <tr class="cols">
+        <th>epoch</th><th>slot</th><th>slot start utc</th><th>validator</th>
+        <th class="groupedge">on chain</th><th>proposer</th><th>exec block#</th><th>blobs</th><th>graffiti</th>
+        <th class="groupedge">cmte</th><th>pos</th>
+        <th class="groupedge">head</th><th>tgt</th><th>src</th><th>head lag</th>
+        <th class="groupedge">incl slot</th><th>dist</th><th>in agg</th><th>agg bits</th><th>missed</th>
+        <th class="groupedge" title="block first seen+verified on gossip — offset from slot start">seen</th>
+        <th title="lighthouse flagged the block late by this much (duration, not offset)">late by</th>
+        <th title="getBlobs request sent to EL — offset from slot start; may overlap other stages, does not imply sequential total">getBlobs req</th>
+        <th title="blobs served by EL / expected">blobs EL</th>
+        <th title="data columns already had via EL when gossip brought them">cols via EL</th>
+        <th title="all blob/column data available — offset from slot start">data ready</th>
+        <th title="block written into fork choice — offset from slot start">imported</th>
+        <th title="where the imported block came from — gossip live vs range_sync backfill">src</th>
+        <th title="all data attestable — offset from slot start">attestable</th>
+        <th title="head ready for the slot tick — offset from slot start">head ready</th>
+        <th class="groupedge" title="consensus (BLS/state-transition) verify duration">consensus</th>
+        <th title="execution layer verify duration">EL verify</th>
+        <th title="fork-choice import write duration">import wr</th>
+        <th title="set-as-head duration">set head</th>
+        <th class="groupedge" title="stage: proposal to first seen on our node">st:propag</th>
+        <th title="stage: seen to all blob/col data available">st:blobs</th>
+        <th title="stage: data available to imported">st:import</th>
+        <th title="slowest stage this slot">bottleneck</th>
+        <th class="groupedge" title="VC began producing attestation — offset from slot start">att start</th>
+        <th title="produce+sign+publish duration">sign+pub dur</th>
+        <th>fails</th><th>fail reason</th>
+        <th class="groupedge" title="att_published_time − slot_start_time, wall clock. THE number: how long start-to-finish. NULL until VC actually attests.">lifecycle</th>
+        <th class="groupedge">peers</th><th>head@tick</th><th>behind</th><th>sync</th>
+        <th class="groupedge">subnet</th><th>propag</th>
+        <th class="groupedge">fault</th>
+      </tr>
+    </thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <div class="empty" id="empty" hidden>NO ROWS — indexer may still be backfilling</div>
+</div>
+
+<footer>
+  <span id="updated">last update —</span>
+  <span id="next">next refresh —</span>
+  <span id="count"></span>
+  <span class="dim">full data: ClickHouse localhost:8123 attmon.attestation_diagnostics / attmon.node_events (user attmon)</span>
+</footer>
+
+<script>
+const POLL_MS = 12000;           // one slot
+// inFlight: never let a second request start while one is outstanding. A slow
+// query used to mean the 12s timer fired anyway, stacking requests until both
+// the browser and ClickHouse fell over.
+let paused = false, lastSlots = new Set(), timerEnd = 0, inFlight = false;
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+// seconds in, prints "347ms" under 1s, "2.15s" from 1s up
+const fmtT = n => Math.abs(n) < 1 ? Math.round(n * 1000) + 'ms' : n.toFixed(2) + 's';
+
+const boolCell = (v, invert, edge) => {
+  const e = edge ? ' groupedge' : '';
+  if (v === null || v === undefined) return `<td class="dim${e}">–</td>`;
+  const yes = Number(v) === 1;
+  const good = invert ? !yes : yes;
+  return `<td class="${good ? 'ok' : 'bad'}${e}">${yes ? (invert ? 'YES' : '✓') : (invert ? 'no' : '✗')}</td>`;
+};
+// value in seconds; warn/bad thresholds in seconds
+const tCell = (v, edge, warn = 4, bad = 8) => {
+  if (v === null || v === undefined) return `<td class="dim${edge ? ' groupedge' : ''}">–</td>`;
+  const n = Number(v);
+  const cls = n <= warn ? 'ok' : n <= bad ? 'warn' : 'bad';
+  return `<td class="${cls}${edge ? ' groupedge' : ''}">${fmtT(n)}</td>`;
+};
+// value in milliseconds; same display rules
+const msCell = (v, edge, warn = 4000, bad = 8000) => {
+  if (v === null || v === undefined) return `<td class="dim${edge ? ' groupedge' : ''}">–</td>`;
+  return tCell(Number(v) / 1000, edge, warn / 1000, bad / 1000);
+};
+const numCell = (v, edge, cls) => {
+  if (v === null || v === undefined) return `<td class="dim${edge ? ' groupedge' : ''}">–</td>`;
+  return `<td class="${cls || ''}${edge ? ' groupedge' : ''}">${v}</td>`;
+};
+const txtCell = (v, edge, max) => {
+  if (!v) return `<td class="dim${edge ? ' groupedge' : ''}">–</td>`;
+  const t = String(v).slice(0, max || 14);
+  return `<td class="dim${edge ? ' groupedge' : ''}" title="${esc(v)}">${esc(t)}</td>`;
+};
+
+function renderRows(rows) {
+  const tb = $('rows');
+  const frag = [];
+  const validators = new Set();
+  const faults = {};
+  for (const r of rows) {
+    validators.add(r.validator_index);
+    faults[r.fault_attribution] = (faults[r.fault_attribution] || 0) + 1;
+    const fresh = !lastSlots.has(r.slot + ':' + r.validator_index) && lastSlots.size > 0;
+    const dist = r.inclusion_distance === null ? null : Number(r.inclusion_distance);
+    const headLag = r.head_lag_slots === null || r.head_lag_slots === undefined ? null : Number(r.head_lag_slots);
+    const aggBits = (r.agg_bits_set === null || r.agg_bits_set === undefined)
+      ? null : r.agg_bits_set + (r.committee_size ? '/' + r.committee_size : '');
+    const blobsEl = (r.blobs_from_el === null || r.blobs_from_el === undefined)
+      ? null : r.blobs_from_el + '/' + (r.blobs_expected ?? '?');
+    frag.push(`<tr${fresh ? ' class="fresh"' : ''}>` +
+      numCell(r.epoch) + numCell(r.slot) +
+      `<td class="dim">${(r.slot_start_utc || '').replace('T',' ')}</td>` +
+      numCell(r.validator_index) +
+      boolCell(r.block_on_chain, false, true) +
+      numCell(r.proposer_index) + numCell(r.exec_block_number) + numCell(r.blob_count) +
+      txtCell(r.graffiti) +
+      numCell(r.committee_index, true) + numCell(r.committee_position) +
+      boolCell(r.head_correct, false, true) +
+      boolCell(r.target_correct) + boolCell(r.source_correct) +
+      numCell(headLag, false, headLag === null ? '' : headLag <= 1 ? 'ok' : 'warn') +
+      numCell(r.inclusion_slot, true) +
+      numCell(dist, false, dist === null ? '' : dist === 1 ? 'ok' : 'warn') +
+      boolCell(r.included_in_aggregate) +
+      numCell(aggBits) +
+      boolCell(r.missed, true) +
+      // BLOCK JOURNEY (wall-clock offsets from slot start, ms — overlap, don't sum)
+      msCell(r.block_seen_ms, true) +
+      msCell(r.gossip_late_by_ms, false, 10, 4000) +
+      msCell(r.el_getblobs_req_ms) +
+      numCell(blobsEl) +
+      numCell(r.cols_via_el) +
+      msCell(r.blobs_ready_ms) +
+      msCell(r.imported_ms) +
+      txtCell(r.import_source, false, 10) +
+      msCell(r.attestable_ms) +
+      msCell(r.head_ready_ms) +
+      // STEP DURATIONS (ms, late blocks only)
+      msCell(r.consensus_verify_ms, true, 500, 2000) +
+      msCell(r.el_verify_ms, false, 500, 2000) +
+      msCell(r.import_write_ms, false, 500, 2000) +
+      msCell(r.set_as_head_ms, false, 500, 2000) +
+      // STAGES (ms, sequential — these DO sum)
+      msCell(r.stage_propagation_ms, true, 2000, 4000) +
+      msCell(r.stage_blob_wait_ms, false, 1000, 3000) +
+      msCell(r.stage_import_ms, false, 500, 2000) +
+      txtCell(r.bottleneck, false, 11) +
+      // VALIDATOR CLIENT
+      msCell(r.att_start_ms, true, 4500, 6000) +
+      msCell(r.vc_publish_dur_ms, false, 1000, 3000) +
+      numCell(r.att_failures, false, Number(r.att_failures) > 0 ? 'bad' : 'dim') +
+      txtCell(r.att_fail_reason, false, 26) +
+      // LIFECYCLE — the single end-to-end number
+      msCell(r.total_attestation_lifecycle_ms, true, 4500, 8000) +
+      // NODE
+      numCell(r.peers, true) + numCell(r.head_slot_at_tick) +
+      numCell(r.node_behind_slots, false,
+        r.node_behind_slots === null ? '' : Number(r.node_behind_slots) <= 1 ? 'ok' : 'bad') +
+      txtCell(r.sync_state, false, 10) +
+      // P2P
+      numCell(r.subnet_id, true) + msCell(r.propagation_delay_ms) +
+      `<td class="groupedge"><span class="pill ${r.fault_attribution}">${r.fault_attribution}</span></td>` +
+      '</tr>');
+  }
+  tb.innerHTML = frag.join('');
+  $('empty').hidden = rows.length > 0;
+  lastSlots = new Set(rows.map(r => r.slot + ':' + r.validator_index));
+  $('validators').innerHTML = 'validator <b>' + [...validators].join(', ') + '</b>';
+  $('count').textContent = rows.length + ' rows';
+
+  const chip = (label, n, cls) => n ? `<span class="chip ${cls}">${label}<b>${n}</b></span>` : '';
+  $('chips').innerHTML =
+    chip('perfect', faults.perfect, 'ok') +
+    chip('included_late', faults.included_late, 'warn') +
+    chip('partial_success', faults.partial_success, 'warn') +
+    chip('aggregator_missed', faults.aggregator_missed, 'warn') +
+    chip('wrong_head_vote', faults.wrong_head_vote, 'bad') +
+    chip('propagation_too_slow', faults.propagation_too_slow, 'bad') +
+    chip('node_broadcast_issue', faults.node_broadcast_issue, 'bad') +
+    chip('block_arrived_late', faults.block_arrived_late, 'bad') +
+    chip('vc_produce_failed', faults.vc_produce_failed, 'bad') +
+    chip('no_block_in_slot', faults.no_block_in_slot, 'bad') +
+    chip('unknown', faults.unknown, '') ||
+    '<span class="chip">no data yet</span>';
+}
+
+async function refresh() {
+  if (inFlight) return;          // previous poll still running — skip this tick
+  inFlight = true;
+  try {
+    const res = await fetch('/api/diagnostics?epochs=' + $('epochs').value);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    renderRows(data.rows);
+    $('live').className = 'live'; $('livetext').textContent = 'LIVE';
+    $('updated').textContent = 'last update ' + new Date().toISOString().slice(11, 19) + ' utc';
+  } catch (e) {
+    $('live').className = 'live err'; $('livetext').textContent = 'ERROR';
+    $('updated').textContent = 'fetch failed: ' + e.message;
+  } finally {
+    inFlight = false;
+    timerEnd = Date.now() + POLL_MS;
+  }
+}
+
+setInterval(() => {
+  if (paused) { $('next').textContent = 'paused'; return; }
+  const left = Math.max(0, Math.ceil((timerEnd - Date.now()) / 1000));
+  $('next').textContent = 'next refresh ' + left + 's';
+  if (Date.now() >= timerEnd) refresh();
+}, 500);
+
+$('pause').onclick = () => {
+  paused = !paused;
+  $('pause').textContent = paused ? '▶ resume' : '❚❚ pause';
+  $('pause').className = paused ? 'paused' : '';
+  $('live').className = paused ? 'live stale' : 'live';
+  $('livetext').textContent = paused ? 'PAUSED' : 'LIVE';
+  if (!paused) refresh();
+};
+$('epochs').onchange = refresh;
+
+refresh();
+</script>
+</body>
+</html>
