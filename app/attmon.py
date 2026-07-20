@@ -71,6 +71,7 @@ def render(rows, console, wide=False):
         ("slot", "Slot"),
         ("slot_start_utc", "Slot start (UTC)"),
         ("validator_index", "Validator"),
+        ("validator_name", "Name"),
         ("committee_index", "Cmte"),
         ("committee_position", "Pos"),
         ("head_correct", "Head"),
@@ -117,6 +118,8 @@ def render(rows, console, wide=False):
             elif key == "fault_attribution":
                 style = FAULT_STYLES.get(v, "white")
                 cells.append(f"[{style}]{v}[/{style}]")
+            elif key == "validator_name":
+                cells.append(str(v)[:18] if v else "-")
             elif key == "inclusion_distance" and v is not None:
                 style = "green" if int(v) == 1 else "yellow"
                 cells.append(f"[{style}]{v}[/{style}]")

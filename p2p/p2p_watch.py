@@ -1,5 +1,6 @@
 """P2P attestation watcher: subscribes to the beacon node's SSE event stream
-and records when our validators' attestations were actually seen on gossip.
+and records when log-discovered validators' attestations were actually seen on
+gossip.
 
 Populates attmon.p2p_attestations:
   propagation_delay_ms  ms from slot start until the attestation was seen
@@ -21,6 +22,7 @@ dedicated sentry would make, minus the extra container.
 import json
 import logging
 import os
+import re
 import sys
 import time
 
@@ -30,9 +32,8 @@ BEACON_URL = os.environ.get("BEACON_URL", "http://hoodi-lighthouse:5052")
 CLICKHOUSE_URL = os.environ.get("CLICKHOUSE_URL", "http://clickhouse:8123")
 CH_USER = os.environ.get("CLICKHOUSE_USER", "attmon")
 CH_PASSWORD = os.environ.get("CLICKHOUSE_PASSWORD", "attmon")
-VALIDATOR_INDICES = {
-    int(v) for v in os.environ.get("VALIDATOR_INDICES", "1454096").split(",")
-}
+VC_LOG_PATH = os.environ.get("VC_LOG_PATH", "/var/log/lighthouse-vc/validator.log")
+MONITORED_VALIDATORS = {}
 
 SLOTS_PER_EPOCH = 32
 SECONDS_PER_SLOT = 12
@@ -62,6 +63,143 @@ def ch_insert(row):
     )
     if not r.ok:
         log.error("clickhouse insert failed: %s %s", r.status_code, r.text[:300])
+
+
+def ch_query(query, data=None):
+    r = requests.post(
+        CLICKHOUSE_URL,
+        params={"query": query},
+        data=data,
+        auth=(CH_USER, CH_PASSWORD),
+        timeout=30,
+    )
+    if not r.ok:
+        raise RuntimeError(f"ClickHouse error: {r.status_code} {r.text[:500]}")
+    return r.text
+
+
+def ch_json(query):
+    return json.loads(ch_query(query))
+
+
+def ensure_schema():
+    ch_query(
+        "ALTER TABLE attmon.node_events "
+        "ADD COLUMN IF NOT EXISTS validator_pubkey String DEFAULT ''"
+    )
+    ch_query(
+        "ALTER TABLE attmon.node_events "
+        "ADD COLUMN IF NOT EXISTS validator_name String DEFAULT ''"
+    )
+    ch_query(
+        "ALTER TABLE attmon.p2p_attestations "
+        "ADD COLUMN IF NOT EXISTS validator_pubkey String DEFAULT ''"
+    )
+    ch_query(
+        "ALTER TABLE attmon.p2p_attestations "
+        "ADD COLUMN IF NOT EXISTS validator_name String DEFAULT ''"
+    )
+    ch_query(
+        """
+        CREATE TABLE IF NOT EXISTS attmon.local_validators
+        (
+            validator_index UInt64,
+            validator_pubkey String,
+            validator_name String,
+            source LowCardinality(String),
+            last_seen DateTime DEFAULT now()
+        )
+        ENGINE = ReplacingMergeTree(last_seen)
+        ORDER BY validator_index
+        """
+    )
+
+
+def discover_validator_log_identities():
+    identities = discover_validator_log_file_identities()
+    rows = ch_json(
+        """
+        SELECT
+            validator_pubkey,
+            anyLast(if(validator_name = '', validator_pubkey, validator_name)) AS validator_name
+        FROM attmon.node_events
+        WHERE src = 'validator' AND validator_pubkey != ''
+        GROUP BY validator_pubkey
+        FORMAT JSON
+        """
+    )["data"]
+    identities.update(
+        {
+            row["validator_pubkey"]: row.get("validator_name") or row["validator_pubkey"]
+            for row in rows
+        }
+    )
+    return identities
+
+
+def discover_validator_log_file_identities():
+    if not os.path.exists(VC_LOG_PATH):
+        return {}
+
+    pubkeys = {}
+    pattern = re.compile(r'(?:voting_pubkey: "?|pubkey: )(0x[0-9a-fA-F]+)"?')
+    with open(VC_LOG_PATH, "r", encoding="utf-8", errors="replace") as f:
+        for line in f:
+            if (
+                "Enabled validator" not in line
+                and "Validator without index" not in line
+                and "Failed to resolve pubkey to index" not in line
+            ):
+                continue
+            match = pattern.search(line)
+            if match:
+                pubkey = match.group(1).lower()
+                pubkeys[pubkey] = pubkey
+    return pubkeys
+
+
+def resolve_validator_indices(pubkeys):
+    if not pubkeys:
+        return {}
+    ids = ",".join(sorted(pubkeys))
+    data = beacon_get(f"/eth/v1/beacon/states/head/validators?id={ids}")["data"]
+    return {
+        item["validator"]["pubkey"]: int(item["index"])
+        for item in data
+    }
+
+
+def upsert_local_validators(validators):
+    if not validators:
+        return
+    rows = []
+    for validator_index, info in validators.items():
+        rows.append(
+            {
+                "validator_index": validator_index,
+                "validator_pubkey": info["pubkey"],
+                "validator_name": info["name"],
+                "source": "lighthouse_logs",
+            }
+        )
+    ch_query(
+        "INSERT INTO attmon.local_validators FORMAT JSONEachRow",
+        data="\n".join(json.dumps(row) for row in rows),
+    )
+
+
+def get_monitored_validators():
+    log_identities = discover_validator_log_identities()
+    if not log_identities:
+        return {}
+
+    resolved = resolve_validator_indices(log_identities.keys())
+    validators = {
+        index: {"pubkey": pubkey, "name": log_identities[pubkey]}
+        for pubkey, index in resolved.items()
+    }
+    upsert_local_validators(validators)
+    return validators
 
 
 def bit_set(hex_bits, i):
@@ -97,7 +235,7 @@ class Duties:
             ci = int(c["index"])
             validators = [int(v) for v in c["validators"]]
             self.sizes.setdefault(slot, {})[ci] = len(validators)
-            for vidx in VALIDATOR_INDICES:
+            for vidx in MONITORED_VALIDATORS:
                 if vidx in validators:
                     self.duty.setdefault(slot, []).append(
                         (vidx, ci, validators.index(vidx))
@@ -151,24 +289,39 @@ def sse_events(topics):
                 pass
 
 
+def refresh_epoch_window(duties, epoch):
+    duties.refresh(epoch)
+    try:
+        duties.refresh(epoch + 1)
+    except Exception as e:
+        log.warning("next epoch duties unavailable (%s); continuing with epoch %s", e, epoch)
+
+
 def main():
-    log.info("watching %s for validators %s", BEACON_URL, sorted(VALIDATOR_INDICES))
+    global MONITORED_VALIDATORS
+    ensure_schema()
+    log.info("watching %s for validators discovered from logs", BEACON_URL)
     genesis = int(beacon_get("/eth/v1/beacon/genesis")["data"]["genesis_time"])
     duties = Duties()
     seen_unagg = {}  # (slot, vidx) -> propagation_delay_ms of first unagg sighting
 
     while True:
         try:
+            MONITORED_VALIDATORS = get_monitored_validators()
+            if not MONITORED_VALIDATORS:
+                log.warning("no validator pubkeys found in logs yet; waiting")
+                time.sleep(5)
+                continue
+            log.info("monitoring validators from logs: %s", sorted(MONITORED_VALIDATORS))
             now_epoch = int(time.time() - genesis) // SECONDS_PER_SLOT // SLOTS_PER_EPOCH
-            duties.refresh(now_epoch)
-            duties.refresh(now_epoch + 1)
+            refresh_epoch_window(duties, now_epoch)
 
             for event, data in sse_events("attestation,single_attestation"):
                 now_ms = time.time() * 1000
 
                 if event == "single_attestation":
                     vidx = int(data.get("attester_index", -1))
-                    if vidx not in VALIDATOR_INDICES:
+                    if vidx not in MONITORED_VALIDATORS:
                         continue
                     slot = int(data["data"]["slot"])
                     ci = int(data.get("committee_index", data["data"].get("index", 0)))
@@ -178,6 +331,8 @@ def main():
                     row = {
                         "slot": slot,
                         "validator_index": vidx,
+                        "validator_pubkey": MONITORED_VALIDATORS[vidx]["pubkey"],
+                        "validator_name": MONITORED_VALIDATORS[vidx]["name"],
                         "propagation_delay_ms": round(delay, 1),
                         "subnet_id": subnet_for(slot, ci, cps),
                         "aggregator_picked": 0,
@@ -201,6 +356,8 @@ def main():
                         row = {
                             "slot": slot,
                             "validator_index": vidx,
+                            "validator_pubkey": MONITORED_VALIDATORS[vidx]["pubkey"],
+                            "validator_name": MONITORED_VALIDATORS[vidx]["name"],
                             "propagation_delay_ms": round(delay, 1),
                             "subnet_id": subnet_for(slot, ci, cps),
                             "aggregator_picked": 1,
@@ -211,8 +368,7 @@ def main():
                 # roll duty window forward as epochs tick over
                 e = int(time.time() - genesis) // SECONDS_PER_SLOT // SLOTS_PER_EPOCH
                 if e + 1 not in duties.loaded_epochs:
-                    duties.refresh(e)
-                    duties.refresh(e + 1)
+                    refresh_epoch_window(duties, e)
                 if len(seen_unagg) > 512:
                     seen_unagg.clear()
 

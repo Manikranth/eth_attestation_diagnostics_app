@@ -10,6 +10,8 @@ CREATE TABLE IF NOT EXISTS attmon.chain_attestations
     slot                  UInt64,
     slot_start_utc        DateTime('UTC'),
     validator_index       UInt64,
+    validator_pubkey      String DEFAULT '',
+    validator_name        String DEFAULT '',
     committee_index       UInt32,
     committee_position    UInt32,
     attested_head_root    String,
@@ -41,6 +43,11 @@ CREATE TABLE IF NOT EXISTS attmon.chain_attestations
 ENGINE = ReplacingMergeTree(inserted_at)
 ORDER BY (validator_index, slot);
 
+ALTER TABLE attmon.chain_attestations
+    ADD COLUMN IF NOT EXISTS validator_pubkey String DEFAULT '';
+ALTER TABLE attmon.chain_attestations
+    ADD COLUMN IF NOT EXISTS validator_name String DEFAULT '';
+
 -- Layer 2: per-event node internals parsed from Lighthouse beacon + validator
 -- client debug logs (Vector writes here). One row per log line of interest;
 -- sparse columns are cheap in ClickHouse.
@@ -49,6 +56,8 @@ CREATE TABLE IF NOT EXISTS attmon.node_events
     ts                  DateTime64(3, 'UTC'),
     src                 LowCardinality(String),   -- beacon | validator
     event               LowCardinality(String),
+    validator_pubkey    String DEFAULT '',
+    validator_name      String DEFAULT '',
     slot                Nullable(UInt64),
     block_root          String DEFAULT '',
     proposer_index      Nullable(UInt64),
@@ -76,6 +85,11 @@ CREATE TABLE IF NOT EXISTS attmon.node_events
 ENGINE = MergeTree
 ORDER BY (event, ts);
 
+ALTER TABLE attmon.node_events
+    ADD COLUMN IF NOT EXISTS validator_pubkey String DEFAULT '';
+ALTER TABLE attmon.node_events
+    ADD COLUMN IF NOT EXISTS validator_name String DEFAULT '';
+
 -- Legacy layer-2 table kept for compatibility (Delayed head block only)
 CREATE TABLE IF NOT EXISTS attmon.node_logs
 (
@@ -91,11 +105,24 @@ CREATE TABLE IF NOT EXISTS attmon.node_logs
 ENGINE = MergeTree
 ORDER BY inserted_at;
 
+CREATE TABLE IF NOT EXISTS attmon.local_validators
+(
+    validator_index  UInt64,
+    validator_pubkey String,
+    validator_name   String,
+    source           LowCardinality(String),
+    last_seen        DateTime DEFAULT now()
+)
+ENGINE = ReplacingMergeTree(last_seen)
+ORDER BY validator_index;
+
 -- Layer 3: P2P gossip observations (Xatu Sentry — stubbed until deployed)
 CREATE TABLE IF NOT EXISTS attmon.p2p_attestations
 (
     slot                 UInt64,
     validator_index      UInt64,
+    validator_pubkey     String DEFAULT '',
+    validator_name       String DEFAULT '',
     propagation_delay_ms Nullable(Float64),
     subnet_id            Nullable(UInt32),
     aggregator_picked    Nullable(UInt8),
@@ -103,6 +130,11 @@ CREATE TABLE IF NOT EXISTS attmon.p2p_attestations
 )
 ENGINE = ReplacingMergeTree(inserted_at)
 ORDER BY (validator_index, slot);
+
+ALTER TABLE attmon.p2p_attestations
+    ADD COLUMN IF NOT EXISTS validator_pubkey String DEFAULT '';
+ALTER TABLE attmon.p2p_attestations
+    ADD COLUMN IF NOT EXISTS validator_name String DEFAULT '';
 
 -- ---------------------------------------------------------------------------
 -- slot_timeline: one row per slot, every step as an ACTUAL offset in seconds
@@ -219,6 +251,8 @@ SELECT
     c.slot                  AS slot,
     c.slot_start_utc        AS slot_start_utc,
     c.validator_index       AS validator_index,
+    c.validator_pubkey      AS validator_pubkey,
+    c.validator_name        AS validator_name,
     c.committee_index       AS committee_index,
     c.committee_position    AS committee_position,
     c.attested_head_root    AS attested_head_root,

@@ -1,5 +1,6 @@
 """Chain Indexer: polls the beacon REST API for finalized epochs and writes
-one row per monitored validator per duty slot to ClickHouse.
+one row per validator discovered from local Lighthouse logs per duty slot to
+ClickHouse.
 
 Handles both pre-Electra attestations (data.index = committee) and
 post-Electra attestations (committee_bits + concatenated aggregation_bits),
@@ -9,6 +10,7 @@ which is what Hoodi produces today.
 import json
 import logging
 import os
+import re
 import sys
 import time
 
@@ -18,9 +20,7 @@ BEACON_URL = os.environ.get("BEACON_URL", "http://hoodi-lighthouse:5052")
 CLICKHOUSE_URL = os.environ.get("CLICKHOUSE_URL", "http://clickhouse:8123")
 CH_USER = os.environ.get("CLICKHOUSE_USER", "attmon")
 CH_PASSWORD = os.environ.get("CLICKHOUSE_PASSWORD", "attmon")
-VALIDATOR_INDICES = [
-    int(v) for v in os.environ.get("VALIDATOR_INDICES", "1454096").split(",")
-]
+VC_LOG_PATH = os.environ.get("VC_LOG_PATH", "/var/log/lighthouse-vc/validator.log")
 BACKFILL_EPOCHS = int(os.environ.get("BACKFILL_EPOCHS", "3"))
 POLL_SECONDS = int(os.environ.get("POLL_SECONDS", "60"))
 
@@ -55,6 +55,130 @@ def ch_query(query, data=None):
     if not r.ok:
         raise RuntimeError(f"ClickHouse error: {r.status_code} {r.text[:500]}")
     return r.text
+
+
+def ch_json(query):
+    return json.loads(ch_query(query))
+
+
+def ensure_schema():
+    ch_query(
+        "ALTER TABLE attmon.node_events "
+        "ADD COLUMN IF NOT EXISTS validator_pubkey String DEFAULT ''"
+    )
+    ch_query(
+        "ALTER TABLE attmon.node_events "
+        "ADD COLUMN IF NOT EXISTS validator_name String DEFAULT ''"
+    )
+    ch_query(
+        "ALTER TABLE attmon.chain_attestations "
+        "ADD COLUMN IF NOT EXISTS validator_pubkey String DEFAULT ''"
+    )
+    ch_query(
+        "ALTER TABLE attmon.chain_attestations "
+        "ADD COLUMN IF NOT EXISTS validator_name String DEFAULT ''"
+    )
+    ch_query(
+        """
+        CREATE TABLE IF NOT EXISTS attmon.local_validators
+        (
+            validator_index UInt64,
+            validator_pubkey String,
+            validator_name String,
+            source LowCardinality(String),
+            last_seen DateTime DEFAULT now()
+        )
+        ENGINE = ReplacingMergeTree(last_seen)
+        ORDER BY validator_index
+        """
+    )
+
+
+def discover_validator_log_identities():
+    identities = discover_validator_log_file_identities()
+    rows = ch_json(
+        """
+        SELECT
+            validator_pubkey,
+            anyLast(if(validator_name = '', validator_pubkey, validator_name)) AS validator_name
+        FROM attmon.node_events
+        WHERE src = 'validator' AND validator_pubkey != ''
+        GROUP BY validator_pubkey
+        FORMAT JSON
+        """
+    )["data"]
+    identities.update(
+        {
+            row["validator_pubkey"]: row.get("validator_name") or row["validator_pubkey"]
+            for row in rows
+        }
+    )
+    return identities
+
+
+def discover_validator_log_file_identities():
+    if not os.path.exists(VC_LOG_PATH):
+        return {}
+
+    pubkeys = {}
+    pattern = re.compile(r'(?:voting_pubkey: "?|pubkey: )(0x[0-9a-fA-F]+)"?')
+    with open(VC_LOG_PATH, "r", encoding="utf-8", errors="replace") as f:
+        for line in f:
+            if (
+                "Enabled validator" not in line
+                and "Validator without index" not in line
+                and "Failed to resolve pubkey to index" not in line
+            ):
+                continue
+            match = pattern.search(line)
+            if match:
+                pubkey = match.group(1).lower()
+                pubkeys[pubkey] = pubkey
+    return pubkeys
+
+
+def resolve_validator_indices(pubkeys):
+    if not pubkeys:
+        return {}
+    ids = ",".join(sorted(pubkeys))
+    data = beacon_get(f"/eth/v1/beacon/states/head/validators?id={ids}")["data"]
+    return {
+        item["validator"]["pubkey"]: int(item["index"])
+        for item in data
+    }
+
+
+def upsert_local_validators(validators):
+    if not validators:
+        return
+    rows = []
+    for validator_index, info in validators.items():
+        rows.append(
+            {
+                "validator_index": validator_index,
+                "validator_pubkey": info["pubkey"],
+                "validator_name": info["name"],
+                "source": "lighthouse_logs",
+            }
+        )
+    ch_query(
+        "INSERT INTO attmon.local_validators FORMAT JSONEachRow",
+        data="\n".join(json.dumps(row) for row in rows),
+    )
+
+
+def get_monitored_validators():
+    log_identities = discover_validator_log_identities()
+    if not log_identities:
+        return {}
+
+    resolved = resolve_validator_indices(log_identities.keys())
+    validators = {
+        index: {"pubkey": pubkey, "name": log_identities[pubkey]}
+        for pubkey, index in resolved.items()
+    }
+    upsert_local_validators(validators)
+    return validators
 
 
 # --- SSZ bitfield helpers -------------------------------------------------
@@ -221,17 +345,18 @@ def canonical_root_at(slot, floor_slot=0):
 
 # --- Epoch processing -----------------------------------------------------
 
-def process_epoch(epoch, genesis_time):
+def process_epoch(epoch, genesis_time, validators):
     committees = get_committees(epoch)
+    validator_indices = set(validators)
 
-    # Locate every monitored validator's duty in this epoch
+    # Locate every log-discovered validator's duty in this epoch.
     duties = {}  # validator_index -> (slot, committee_index, position)
     for slot, comms in committees.items():
-        for ci, validators in comms.items():
-            for vidx in VALIDATOR_INDICES:
-                if vidx in validators:
-                    duties[vidx] = (slot, ci, validators.index(vidx))
-    for vidx in VALIDATOR_INDICES:
+        for ci, committee_validators in comms.items():
+            for vidx in validator_indices:
+                if vidx in committee_validators:
+                    duties[vidx] = (slot, ci, committee_validators.index(vidx))
+    for vidx in validator_indices:
         if vidx not in duties:
             log.warning("validator %s has no duty in epoch %s (unexpected)", vidx, epoch)
 
@@ -273,6 +398,8 @@ def process_epoch(epoch, genesis_time):
                 time.gmtime(genesis_time + duty_slot * SECONDS_PER_SLOT),
             ),
             "validator_index": vidx,
+            "validator_pubkey": validators[vidx]["pubkey"],
+            "validator_name": validators[vidx]["name"],
             "committee_index": ci,
             "committee_position": pos,
             "canonical_head_root": canonical_head,
@@ -339,31 +466,35 @@ def process_epoch(epoch, genesis_time):
     return len(rows)
 
 
-def last_processed_epoch():
+def last_processed_epoch(validators):
+    if not validators:
+        return None
     txt = ch_query(
         "SELECT max(epoch) FROM attmon.chain_attestations "
-        f"WHERE validator_index IN ({','.join(map(str, VALIDATOR_INDICES))})"
+        f"WHERE validator_index IN ({','.join(map(str, validators))})"
     ).strip()
     return int(txt) if txt and txt != "0" else None
 
 
 def main():
-    log.info(
-        "starting: beacon=%s validators=%s backfill=%s epochs",
-        BEACON_URL,
-        VALIDATOR_INDICES,
-        BACKFILL_EPOCHS,
-    )
+    ensure_schema()
+    log.info("starting: beacon=%s backfill=%s epochs", BEACON_URL, BACKFILL_EPOCHS)
     genesis_time = get_genesis_time()
 
     while True:
         try:
+            validators = get_monitored_validators()
+            if not validators:
+                log.warning("no validator pubkeys found in logs yet; waiting")
+                time.sleep(POLL_SECONDS)
+                continue
+            log.info("monitoring validators from logs: %s", sorted(validators))
             target = get_target_epoch()
-            done = last_processed_epoch()
+            done = last_processed_epoch(validators)
             start = (done + 1) if done else max(target - BACKFILL_EPOCHS + 1, 0)
             for epoch in range(start, target + 1):
                 log.info("processing epoch %s (target=%s)", epoch, target)
-                process_epoch(epoch, genesis_time)
+                process_epoch(epoch, genesis_time, validators)
         except Exception:
             log.exception("epoch processing failed; retrying next poll")
         time.sleep(POLL_SECONDS)

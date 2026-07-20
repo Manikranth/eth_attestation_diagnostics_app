@@ -28,9 +28,11 @@ services:
       CLICKHOUSE_URL: http://clickhouse:8123
       CLICKHOUSE_USER: ${CLICKHOUSE_USER:-attmon}
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-attmon}
-      VALIDATOR_INDICES: ${VALIDATOR_INDICES:-1454096}
       BACKFILL_EPOCHS: ${BACKFILL_EPOCHS:-3}
       POLL_SECONDS: ${POLL_SECONDS:-60}
+      VC_LOG_PATH: /var/log/lighthouse-vc/validator.log
+    volumes:
+      - ${VC_LOG_DIR:-/Volumes/geth/hoodi_node/lighthouse/hoodi/validators/logs}:/var/log/lighthouse-vc:ro
     depends_on:
       clickhouse:
         condition: service_healthy
@@ -65,7 +67,9 @@ services:
       CLICKHOUSE_URL: http://clickhouse:8123
       CLICKHOUSE_USER: ${CLICKHOUSE_USER:-attmon}
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-attmon}
-      VALIDATOR_INDICES: ${VALIDATOR_INDICES:-1454096}
+      VC_LOG_PATH: /var/log/lighthouse-vc/validator.log
+    volumes:
+      - ${VC_LOG_DIR:-/Volumes/geth/hoodi_node/lighthouse/hoodi/validators/logs}:/var/log/lighthouse-vc:ro
     depends_on:
       clickhouse:
         condition: service_healthy

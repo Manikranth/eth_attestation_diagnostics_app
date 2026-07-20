@@ -16,8 +16,10 @@ ClickHouse views:
   attmon.attestation_diagnostics  one joined row per duty slot (dashboard/CLI)
 ```
 
-Monitored validator: **1454096** (change `VALIDATOR_INDICES` in `.env`,
-comma-separated for multiple).
+Monitored validators are discovered from Lighthouse validator-client logs.
+Vector stores local validator pubkeys from lines such as `Enabled validator`
+and the indexer resolves those pubkeys to validator indices through the beacon
+API before writing per-validator diagnostics.
 
 ## How to run this
 
@@ -117,7 +119,7 @@ First match wins:
 
 ```
 docker-compose.yml        orchestration (joins external network hoodi_node_default)
-.env                      knobs: validator indices, backfill depth, log path
+.env                      knobs: backfill depth, log path
 clickhouse/init/          schema: 3 tables + attestation_diagnostics view
 indexer/                  Python chain indexer (beacon REST -> ClickHouse)
 app/                      Python CLI (ClickHouse view -> rich table / JSON)
@@ -128,7 +130,7 @@ prometheus/prometheus.yml scrapes hoodi-lighthouse:5054
 
 ## What's easy vs hard to change
 
-Easy: validator list, backfill depth (`.env`), table styling (`app/attmon.py`),
+Easy: backfill depth (`.env`), table styling (`app/attmon.py`),
 fault thresholds (the `multiIf` in `clickhouse/init/01_tables.sql` — edit and
 rerun the `CREATE OR REPLACE VIEW` statement).
 

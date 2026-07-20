@@ -164,7 +164,7 @@
   <table>
     <thead>
       <tr class="groups">
-        <th colspan="4">CHAIN</th>
+        <th colspan="5">CHAIN</th>
         <th colspan="5" class="groupedge">BLOCK @ DUTY SLOT</th>
         <th colspan="2" class="groupedge">COMMITTEE</th>
         <th colspan="4" class="groupedge">VOTES</th>
@@ -179,7 +179,7 @@
         <th class="groupedge">VERDICT</th>
       </tr>
       <tr class="cols">
-        <th>epoch</th><th>slot</th><th>slot start utc</th><th>validator</th>
+        <th>epoch</th><th>slot</th><th>slot start utc</th><th>validator</th><th>name</th>
         <th class="groupedge">on chain</th><th>proposer</th><th>exec block#</th><th>blobs</th><th>graffiti</th>
         <th class="groupedge">cmte</th><th>pos</th>
         <th class="groupedge">head</th><th>tgt</th><th>src</th><th>head lag</th>
@@ -284,6 +284,7 @@ function renderRows(rows) {
       numCell(r.epoch) + numCell(r.slot) +
       `<td class="dim">${(r.slot_start_utc || '').replace('T',' ')}</td>` +
       numCell(r.validator_index) +
+      txtCell(r.validator_name || r.validator_pubkey, false, 18) +
       boolCell(r.block_on_chain, false, true) +
       numCell(r.proposer_index) + numCell(r.exec_block_number) + numCell(r.blob_count) +
       txtCell(r.graffiti) +

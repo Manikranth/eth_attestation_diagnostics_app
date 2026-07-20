@@ -77,6 +77,7 @@ class Handler(BaseHTTPRequestHandler):
                 # root, or (for slot/root-less lines) by timestamp window
                 events = ch_query(
                     "SELECT ts, src, event, slot, block_root, proposer_index,"
+                    " validator_pubkey, validator_name,"
                     " peers, head_slot, current_slot, sync_state, delay_s,"
                     " observed_delay_ms, blob_delay_ms, consensus_time_ms,"
                     " execution_time_ms, available_delay_ms, attestable_delay_ms,"
