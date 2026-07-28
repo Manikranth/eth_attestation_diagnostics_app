@@ -226,10 +226,9 @@
         <dt>late by</dt><dd>how late Lighthouse judged the block (duration).</dd>
         <dt>blob src</dt><dd>where the blobs came from: <b>gossip</b>, <b>el</b> (getBlobs from execution), <b>gossip+el</b>, or <b>none</b>.</dd>
         <dt>getBlobs req / blobs EL / cols EL</dt><dd>getBlobs request offset, blobs served/expected by the EL, and columns already held via the EL.</dd>
-        <dt>gossip blob</dt><dd>when the first blob arrived over gossip (offset).</dd>
         <dt>data ready</dt><dd>all blob/column data available (offset).</dd>
-        <dt>consensus / EL verify / import wr / set head</dt><dd>how long each verify + import step itself took (durations — most precise on late blocks).</dd>
-        <dt>imported / attestable / head ready</dt><dd>block imported, all data attestable (beacon node done, ready for the VC), and head ready (offsets).</dd>
+        <dt>consensus / EL verify</dt><dd>how long consensus and execution-layer verification each took (durations — only logged on late blocks).</dd>
+        <dt>imported / attestable</dt><dd>block imported into fork choice, and all data attestable — the moment the beacon node was done and ready for the VC (offsets).</dd>
         <dt>st:propag / st:blobs / st:import</dt><dd>the sequential stage gaps — these DO sum to the total.</dd>
         <dt>att start / sign+pub / broadcast</dt><dd>VC started producing, how long produce+sign+publish took, and when the vote hit the wire (offset). <b>broadcast</b> is the single end-to-end number.</dd>
       </dl>
@@ -267,7 +266,7 @@
     <thead>
       <tr class="sections">
         <th colspan="22" class="info">INFORMATION</th>
-        <th colspan="25" title="every sub-step of the attestation pipeline, in the ACTUAL order it happened — each column tagged BN=beacon node, EL=execution layer, VC=validator client">ATTESTATION · sequential pipeline</th>
+        <th colspan="21" title="every sub-step of the attestation pipeline, in the ACTUAL order it happened — each column tagged BN=beacon node, EL=execution layer, VC=validator client">ATTESTATION · sequential pipeline</th>
         <th colspan="6" class="agg" title="aggregation of your vote: did an aggregator pick it up, how big, when, peers at the time">AGGREGATION</th>
         <th colspan="3" class="prop" title="how your vote propagated on gossip: time to hit the wire, which subnet">PROPAGATION</th>
         <th colspan="1" class="verdict">VERDICT</th>
@@ -280,8 +279,8 @@
         <th colspan="3" class="groupedge">INCLUSION</th>
         <th colspan="3" class="groupedge">NODE</th>
         <th colspan="2" class="groupedge" title="block received on our beacon node">RECEIVE · BN</th>
-        <th colspan="6" class="groupedge" title="blob / data-column arrival — where from and when">BLOBS · BN/EL</th>
-        <th colspan="8" class="groupedge" title="verify + import durations and offsets">VERIFY + IMPORT · BN/EL</th>
+        <th colspan="5" class="groupedge" title="blob / data-column arrival — where from and when">BLOBS · BN/EL</th>
+        <th colspan="5" class="groupedge" title="verify + import durations and offsets">VERIFY + IMPORT · BN/EL</th>
         <th colspan="4" class="groupedge" title="sequential gaps between the offsets — these DO sum">STAGES · Δ</th>
         <th colspan="5" class="groupedge" title="validator client: produce, sign, publish">VALIDATOR CLIENT · VC</th>
         <th colspan="6" class="groupedge">AGGREGATE PICKUP</th>
@@ -311,17 +310,13 @@
         <th class="lyr" data-lyr="BN→EL" title="getBlobs request sent to EL — offset from slot start">getBlobs req</th>
         <th class="lyr" data-lyr="EL" title="blobs served by EL / expected">blobs EL</th>
         <th class="lyr" data-lyr="EL" title="data columns already had via EL when gossip brought them">cols EL</th>
-        <th class="lyr" data-lyr="BN" title="first blob/data column verified from GOSSIP — offset from slot start">gossip blob</th>
         <th class="lyr" data-lyr="BN" title="all blob/column data available — offset from slot start">data ready</th>
         <!-- ATTESTATION · VERIFY + IMPORT -->
         <th class="groupedge lyr" data-lyr="BN" title="consensus (BLS / state-transition) verify duration">consensus</th>
         <th class="lyr" data-lyr="EL" title="execution layer verify duration">EL verify</th>
         <th class="lyr" data-lyr="BN" title="block written into fork choice — offset from slot start">imported</th>
-        <th class="lyr" data-lyr="BN" title="fork-choice import write duration">import wr</th>
         <th class="lyr" data-lyr="BN" title="where the imported block came from — gossip live vs range_sync backfill">import src</th>
-        <th class="lyr" data-lyr="BN" title="set-as-head duration">set head</th>
         <th class="lyr" data-lyr="BN" title="all data attestable — offset from slot start. This is when the beacon node was done and ready for the VC.">attestable</th>
-        <th class="lyr" data-lyr="BN" title="head ready for the slot tick — offset from slot start">head ready</th>
         <!-- ATTESTATION · STAGES -->
         <th class="groupedge lyr" data-lyr="Δ" title="stage: proposal → first seen on our node">st:propag</th>
         <th class="lyr" data-lyr="Δ" title="stage: seen → all blob/col data available">st:blobs</th>
@@ -454,17 +449,13 @@ function renderRows(rows) {
       msCell(r.el_getblobs_req_ms) +
       numCell(blobsEl) +
       numCell(r.cols_via_el) +
-      msCell(r.gossip_blob_arrival_ms) +
       msCell(r.blobs_ready_ms) +
       // VERIFY + IMPORT [BN/EL]
       msCell(r.consensus_verify_ms, true, 500, 2000) +
       msCell(r.el_verify_ms, false, 500, 2000) +
       msCell(r.imported_ms) +
-      msCell(r.import_write_ms, false, 500, 2000) +
       txtCell(r.import_source, false, 10) +
-      msCell(r.set_as_head_ms, false, 500, 2000) +
       msCell(r.attestable_ms) +
-      msCell(r.head_ready_ms) +
       // STAGES (Δ, sequential — these DO sum)
       msCell(r.stage_propagation_ms, true, 2000, 4000) +
       msCell(r.stage_blob_wait_ms, false, 1000, 3000) +
