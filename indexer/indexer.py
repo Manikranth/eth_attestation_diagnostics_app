@@ -22,6 +22,9 @@ CH_USER = os.environ.get("CLICKHOUSE_USER", "attmon")
 CH_PASSWORD = os.environ.get("CLICKHOUSE_PASSWORD", "attmon")
 VC_LOG_PATH = os.environ.get("VC_LOG_PATH", "/var/log/lighthouse-vc/validator.log")
 BACKFILL_EPOCHS = int(os.environ.get("BACKFILL_EPOCHS", "3"))
+# How many trailing epochs to re-evaluate each poll once the node is trusted,
+# so vote verdicts written while it was still syncing get overwritten (self-heal).
+REEVAL_EPOCHS = int(os.environ.get("REEVAL_EPOCHS", "8"))
 POLL_SECONDS = int(os.environ.get("POLL_SECONDS", "60"))
 
 SLOTS_PER_EPOCH = 32
@@ -226,6 +229,28 @@ def get_finalized_epoch():
     return int(data["finalized"]["epoch"])
 
 
+def node_is_optimistic():
+    """True if the beacon node's head is optimistic, still syncing, or its EL
+    is offline — states in which its canonical view can't be trusted for
+    vote-correctness verdicts. On any error, treat as untrusted.
+
+    While the node range-syncs, `/eth/v1/beacon/headers/{slot}` returns an
+    unstable optimistic head, so `head_correct` computed against it disagrees
+    with the settled canonical chain (the false-green head-vote bug). We write
+    NULL verdicts in that window and re-evaluate once the node is trusted.
+    """
+    try:
+        d = beacon_get("/eth/v1/beacon/syncing")["data"]
+        return (
+            bool(d.get("is_optimistic"))
+            or bool(d.get("is_syncing"))
+            or bool(d.get("el_offline"))
+        )
+    except Exception:
+        log.warning("could not read /eth/v1/beacon/syncing; treating node as untrusted")
+        return True
+
+
 def get_target_epoch():
     """Newest epoch that can be fully judged: attestations for epoch E are
     includible through the end of epoch E+1, so E is closed once the node's
@@ -345,7 +370,7 @@ def canonical_root_at(slot, floor_slot=0):
 
 # --- Epoch processing -----------------------------------------------------
 
-def process_epoch(epoch, genesis_time, validators):
+def process_epoch(epoch, genesis_time, validators, trustworthy=True):
     committees = get_committees(epoch)
     validator_indices = set(validators)
 
@@ -415,8 +440,15 @@ def process_epoch(epoch, genesis_time, validators):
                 attested_head_root=data["beacon_block_root"],
                 attested_target_root=data["target"]["root"],
                 attested_source_root=data["source"]["root"],
-                head_correct=int(data["beacon_block_root"] == canonical_head),
-                target_correct=int(data["target"]["root"] == canonical_target),
+                # NULL (not 0) when the node is untrusted or canonical is
+                # unresolved: renders as "–" instead of a confident wrong verdict.
+                # Re-evaluated once the node is trusted (see main()).
+                head_correct=int(data["beacon_block_root"] == canonical_head)
+                if (trustworthy and canonical_head)
+                else None,
+                target_correct=int(data["target"]["root"] == canonical_target)
+                if (trustworthy and canonical_target)
+                else None,
                 # how many slots behind the duty slot the attested head was
                 head_lag_slots=(duty_slot - attested_head_slot)
                 if attested_head_slot is not None
@@ -490,11 +522,24 @@ def main():
                 continue
             log.info("monitoring validators from logs: %s", sorted(validators))
             target = get_target_epoch()
+            trustworthy = not node_is_optimistic()
             done = last_processed_epoch(validators)
-            start = (done + 1) if done else max(target - BACKFILL_EPOCHS + 1, 0)
+            start_new = (done + 1) if done else max(target - BACKFILL_EPOCHS + 1, 0)
+            # When the node is trusted, walk back over a trailing window and
+            # overwrite verdicts that were written NULL while it was syncing
+            # (ReplacingMergeTree dedups on inserted_at). When untrusted, only
+            # move forward — recomputing would just re-write NULLs.
+            start = (
+                min(start_new, max(target - REEVAL_EPOCHS + 1, 0))
+                if trustworthy
+                else start_new
+            )
+            log.info(
+                "target=%s trusted=%s processing epochs %s..%s",
+                target, trustworthy, start, target,
+            )
             for epoch in range(start, target + 1):
-                log.info("processing epoch %s (target=%s)", epoch, target)
-                process_epoch(epoch, genesis_time, validators)
+                process_epoch(epoch, genesis_time, validators, trustworthy)
         except Exception:
             log.exception("epoch processing failed; retrying next poll")
         time.sleep(POLL_SECONDS)

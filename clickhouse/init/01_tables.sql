@@ -18,8 +18,11 @@ CREATE TABLE IF NOT EXISTS attmon.chain_attestations
     attested_target_root  String,
     attested_source_root  String,
     canonical_head_root   String,
-    head_correct          UInt8,
-    target_correct        UInt8,
+    -- Nullable: written NULL (renders "–") while the node is optimistic/syncing
+    -- and its canonical view can't be trusted, so a bad canonical read never
+    -- surfaces as a confident wrong ✓/✗. Re-evaluated once the node is trusted.
+    head_correct          Nullable(UInt8),
+    target_correct        Nullable(UInt8),
     source_correct        UInt8,
     inclusion_slot        Nullable(UInt64),
     inclusion_distance    Nullable(UInt64),
@@ -47,6 +50,12 @@ ALTER TABLE attmon.chain_attestations
     ADD COLUMN IF NOT EXISTS validator_pubkey String DEFAULT '';
 ALTER TABLE attmon.chain_attestations
     ADD COLUMN IF NOT EXISTS validator_name String DEFAULT '';
+-- Existing volumes: convert the vote verdicts to Nullable in place so the
+-- indexer can write NULL "unknown-while-syncing" verdicts (see CREATE above).
+ALTER TABLE attmon.chain_attestations
+    MODIFY COLUMN head_correct Nullable(UInt8);
+ALTER TABLE attmon.chain_attestations
+    MODIFY COLUMN target_correct Nullable(UInt8);
 
 -- Layer 2: per-event node internals parsed from Lighthouse beacon + validator
 -- client debug logs (Vector writes here). One row per log line of interest;
@@ -203,6 +212,10 @@ SELECT
     minIfOrNull(toUnixTimestamp64Milli(ts), event = 'cols_stored') / 1000.0
         - (genesis + slot * 12)                                  AS data_complete_s,
     maxIf(count, event = 'cols_stored')                          AS cols_stored,
+    -- blobs/data-columns that arrived via GOSSIP (vs the EL getBlobs path)
+    countIf(event = 'gossip_blob_verified')                      AS blobs_from_gossip,
+    minIfOrNull(toUnixTimestamp64Milli(ts), event = 'gossip_blob_verified') / 1000.0
+        - (genesis + slot * 12)                                  AS gossip_blob_arrival_s,
     -- delayed-head breakdown (ms, only logged when block was late)
     maxIf(observed_delay_ms, event = 'delayed_head')             AS observed_delay_ms,
     maxIf(blob_delay_ms, event = 'delayed_head')                 AS blob_delay_ms,
@@ -218,6 +231,8 @@ SELECT
         - (genesis + slot * 12)                                  AS att_start_s,
     minIfOrNull(toUnixTimestamp64Milli(ts), event = 'att_published') / 1000.0
         - (genesis + slot * 12)                                  AS att_published_s,
+    minIfOrNull(toUnixTimestamp64Milli(ts), event = 'agg_published') / 1000.0
+        - (genesis + slot * 12)                                  AS agg_published_s,
     countIf(event = 'att_failed')                                AS att_failures,
     anyIf(detail, event = 'att_failed')                          AS att_fail_reason,
     -- node health at the slot tick
@@ -284,6 +299,17 @@ SELECT
     t.blobs_expected        AS blobs_expected,
     t.cols_via_el           AS cols_via_el,
     t.cols_stored           AS cols_stored,
+    -- where the blobs/data columns actually came from this slot
+    t.blobs_from_gossip     AS blobs_from_gossip,
+    round(t.gossip_blob_arrival_s * 1000) AS gossip_blob_arrival_ms,
+    multiIf(
+        coalesce(t.blobs_from_gossip, 0) > 0 AND
+            (coalesce(t.blobs_from_el, 0) > 0 OR coalesce(t.cols_via_el, 0) > 0), 'gossip+el',
+        coalesce(t.blobs_from_gossip, 0) > 0,                                     'gossip',
+        coalesce(t.blobs_from_el, 0) > 0 OR coalesce(t.cols_via_el, 0) > 0,       'el',
+        c.blob_count = 0,                                                         'none',
+        NULL
+    )                       AS blob_source,
     x_blobs_ready_ms        AS blobs_ready_ms,
     x_available_ms          AS available_ms,
     round(coalesce(t.attestable_delay_ms, t.data_complete_s * 1000)) AS attestable_ms,
@@ -317,6 +343,9 @@ SELECT
     -- validator client (ms after slot start)
     round(t.att_start_s * 1000) AS att_start_ms,
     x_vc_pub_dur_ms         AS vc_publish_dur_ms,
+    -- aggregation: when our node published the aggregate for this slot (ms
+    -- after slot start), NULL if this validator wasn't an aggregator
+    round(t.agg_published_s * 1000) AS agg_published_ms,
     -- THE end-to-end number: attestation hit gossip this long after slot
     -- start (wall clock). NULL until the VC actually published.
     round(t.att_published_s * 1000) AS total_attestation_lifecycle_ms,

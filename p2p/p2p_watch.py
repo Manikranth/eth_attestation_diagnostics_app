@@ -289,8 +289,32 @@ def sse_events(topics):
                 pass
 
 
+def head_epoch(genesis):
+    """Epoch of the beacon node's current head.
+
+    Derived from the node's head slot, NOT wall clock: while the node
+    range-syncs, its head lags real time by many epochs, and
+    `states/head/committees?epoch=N` 400s for any epoch far from the head
+    state. Using the head epoch keeps duty refreshes valid (and aligned with
+    the slots the SSE stream is actually delivering). Falls back to wall clock
+    only if the head can't be read.
+    """
+    try:
+        hdr = beacon_get("/eth/v1/beacon/headers/head")
+        return int(hdr["data"]["header"]["message"]["slot"]) // SLOTS_PER_EPOCH
+    except Exception as e:
+        log.warning("could not read head; falling back to wall-clock epoch (%s)", e)
+        return int(time.time() - genesis) // SECONDS_PER_SLOT // SLOTS_PER_EPOCH
+
+
 def refresh_epoch_window(duties, epoch):
-    duties.refresh(epoch)
+    # Both refreshes are non-fatal: a syncing node 400s on committee lookups,
+    # and that must NOT kill the SSE loop (the old crash-loop that left
+    # p2p_attestations empty). Worst case we just lack duties for a window.
+    try:
+        duties.refresh(epoch)
+    except Exception as e:
+        log.warning("duties for epoch %s unavailable (%s); continuing", epoch, e)
     try:
         duties.refresh(epoch + 1)
     except Exception as e:
@@ -304,6 +328,7 @@ def main():
     genesis = int(beacon_get("/eth/v1/beacon/genesis")["data"]["genesis_time"])
     duties = Duties()
     seen_unagg = {}  # (slot, vidx) -> propagation_delay_ms of first unagg sighting
+    last_roll_check = 0.0  # wall-clock throttle for the per-event head lookup
 
     while True:
         try:
@@ -313,7 +338,7 @@ def main():
                 time.sleep(5)
                 continue
             log.info("monitoring validators from logs: %s", sorted(MONITORED_VALIDATORS))
-            now_epoch = int(time.time() - genesis) // SECONDS_PER_SLOT // SLOTS_PER_EPOCH
+            now_epoch = head_epoch(genesis)
             refresh_epoch_window(duties, now_epoch)
 
             for event, data in sse_events("attestation,single_attestation"):
@@ -365,10 +390,14 @@ def main():
                         ch_insert(row)
                         log.info("aggregate pickup: %s", row)
 
-                # roll duty window forward as epochs tick over
-                e = int(time.time() - genesis) // SECONDS_PER_SLOT // SLOTS_PER_EPOCH
-                if e + 1 not in duties.loaded_epochs:
-                    refresh_epoch_window(duties, e)
+                # roll duty window forward as the node's head advances. Throttle
+                # the head lookup to once per ~24s so it doesn't fire an HTTP
+                # call on every streamed attestation.
+                if time.time() - last_roll_check > 24:
+                    last_roll_check = time.time()
+                    e = head_epoch(genesis)
+                    if e + 1 not in duties.loaded_epochs:
+                        refresh_epoch_window(duties, e)
                 if len(seen_unagg) > 512:
                     seen_unagg.clear()
 

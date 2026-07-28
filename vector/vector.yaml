@@ -60,6 +60,10 @@ transforms:
         out.event = "gossip_verified"
       } else if contains(raw, "New block received") {
         out.event = "new_block"
+      } else if contains(raw, "Successfully verified gossip blob") || contains(raw, "Successfully verified gossip data column") {
+        # a blob/data-column arrived over GOSSIP (not the EL getBlobs path).
+        # one line per blob; the view counts them and takes the first arrival.
+        out.event = "gossip_blob_verified"
       } else if contains(raw, "Gossip block arrived late") {
         prop_m  = parse_regex(raw, r'proposer_index: (?P<v>\d+)') ?? {}
         delay_m = parse_regex(raw, r'block_delay: (?P<num>[0-9.]+)(?P<unit>m?s)') ?? {}
