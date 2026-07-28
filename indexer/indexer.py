@@ -254,7 +254,7 @@ def node_is_optimistic():
     raw is_syncing flag, or every row would read '–' forever during backfill.
     """
     try:
-        d = beacon_get("/eth/v1/beacon/syncing")["data"]
+        d = beacon_get("/eth/v1/node/syncing")["data"]
         sync_distance = int(d.get("sync_distance", 0))
         return (
             bool(d.get("is_optimistic"))
@@ -262,7 +262,7 @@ def node_is_optimistic():
             or sync_distance > HEAD_LAG_TRUST_SLOTS
         )
     except Exception:
-        log.warning("could not read /eth/v1/beacon/syncing; treating node as untrusted")
+        log.warning("could not read /eth/v1/node/syncing; treating node as untrusted")
         return True
 
 
