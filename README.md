@@ -56,6 +56,88 @@ docker compose run --rm app --json /tmp/out.json
 ClickHouse is on `localhost:8123` (user/pass `attmon`/`attmon`),
 Prometheus UI on `localhost:9090`.
 
+## Runbook: reading the UI
+
+The UI does not hide or "blank out" successful data. A dash (`–`) means the
+underlying ClickHouse value is `NULL`, empty, or not applicable for that row.
+Common reasons:
+- The event never happened for that slot, for example no late-block log means
+  the late-block breakdown columns stay blank.
+- The data source is not available for that measurement yet, for example
+  sentry-only fields are shown as `n/a`.
+- The node was syncing or optimistic, so head/target verdicts are intentionally
+  left unknown instead of showing a false confident `✓` or `✗`.
+- The validator was not an aggregator for that slot, so aggregate-publish time
+  is blank.
+
+Many timing columns are offsets from the start of the slot, not step durations.
+That is why values can look repeated: `seen`, `data ready`, `imported`,
+`attestable`, `head ready`, and `broadcast` are all timestamps on the same
+12-second slot clock. Only columns prefixed with `st:` are sequential stage
+gaps intended to be compared or summed.
+
+### Dashboard columns
+
+| Column | Source | Meaning |
+|---|---|---|
+| `epoch` | chain indexer | Epoch containing the validator duty. |
+| `slot` | chain indexer | Duty slot for this validator's attestation. |
+| `slot start utc` | chain indexer | UTC wall-clock start of the duty slot. |
+| `validator` | chain indexer | Validator index resolved from local Lighthouse validator logs. |
+| `name` | chain indexer / logs | Validator name when known, otherwise pubkey-derived identity. |
+| `on chain` | beacon API | Whether a block exists at the duty slot. |
+| `proposer` | beacon API | Validator index that proposed the duty-slot block. |
+| `exec block#` | beacon API | Execution-layer block number for the duty-slot block. |
+| `blobs` | beacon API | Number of blob KZG commitments in the duty-slot block. |
+| `graffiti` | beacon API | Block graffiti, truncated in the UI. |
+| `cmte` | beacon API | Attestation committee index. |
+| `pos` | beacon API | Validator position inside that committee. |
+| `head` | chain indexer | Whether the attested head root matched the canonical head for the duty slot; `–` means unknown while syncing. |
+| `tgt` | chain indexer | Whether the target checkpoint vote was correct; `–` means unknown while syncing. |
+| `src` | chain indexer | Whether the source checkpoint vote was correct. Included attestations prove source correctness. |
+| `head lag` | chain indexer | Duty slot minus the slot of the block root you attested to. `0` is ideal. |
+| `incl slot` | chain indexer | Slot where the attestation was included on chain. |
+| `dist` | chain indexer | Inclusion distance: `incl slot - duty slot`. `1` is ideal. |
+| `missed` | chain indexer | `YES` when the attestation never appeared on chain. |
+| `head@tick` | Lighthouse logs | Beacon node head slot at the local slot timer tick. |
+| `behind` | Lighthouse logs | Duty slot minus `head@tick`; shows how far the local node was behind. |
+| `sync` | Lighthouse logs | Lighthouse sync state at the slot timer tick. |
+| `seen` | Lighthouse logs | Offset from slot start when the block was first seen and verified on gossip. |
+| `late by` | Lighthouse logs | Lighthouse's late-block delay duration, only present when Lighthouse logged a late block. |
+| `blob src` | Lighthouse logs / beacon API | Where blob/data columns came from: `gossip`, `el`, `gossip+el`, `none`, or blank if unknown. |
+| `getBlobs req` | Lighthouse logs | Offset when the beacon node requested blobs from the execution layer. |
+| `blobs EL` | Lighthouse logs | Blobs fetched from execution layer as `fetched/expected`. |
+| `cols EL` | Lighthouse logs | Data columns already available through the execution-layer path. |
+| `gossip blob` | Lighthouse logs | Offset when the first blob/data column arrived via gossip. |
+| `data ready` | Lighthouse logs | Offset when all blob/data-column requirements were satisfied. |
+| `consensus` | Lighthouse logs | Consensus verification duration, mostly populated for late-block breakdowns. |
+| `EL verify` | Lighthouse logs | Execution-layer verification duration, mostly populated for late-block breakdowns. |
+| `imported` | Lighthouse logs | Offset when the block was imported into fork choice. |
+| `import wr` | Lighthouse logs | Fork-choice import write duration, mostly populated for late-block breakdowns. |
+| `import src` | Lighthouse logs | Import source, such as live gossip or range-sync backfill. |
+| `set head` | Lighthouse logs | Set-as-head duration, mostly populated for late-block breakdowns. |
+| `attestable` | Lighthouse logs | Offset when the beacon node considered the block/data attestable. |
+| `head ready` | Lighthouse logs | Offset when the head was ready for the slot. |
+| `st:propag` | derived | Sequential stage gap from slot start to first local block sighting. |
+| `st:blobs` | derived | Sequential stage gap from first block sighting to data availability. |
+| `st:import` | derived | Sequential stage gap from data availability to block import. |
+| `bottleneck` | derived | Largest observed stage for the slot: propagation, blob wait, import, or VC publish. |
+| `att start` | validator logs | Offset when the validator client started producing the attestation. |
+| `sign+pub` | validator logs | Validator-client produce, sign, and publish duration. |
+| `broadcast` | validator logs | Offset when the attestation was published to gossip; the end-to-end local lifecycle number. |
+| `fails` | validator logs | Count of validator-client attestation production failures for that slot. |
+| `fail reason` | validator logs | Failure detail when production failed. |
+| `in agg` | chain indexer | Whether the attestation was included in an on-chain aggregate. |
+| `picked` | p2p watcher | Whether the local p2p watcher saw an aggregator pick up the vote. |
+| `agg bits` | chain indexer | Participants in the aggregate that carried this vote, shown as `set/committee_size`. |
+| `agg pub` | Lighthouse logs | Offset when our node published an aggregate; blank when this validator was not aggregating. |
+| `peers` | Lighthouse logs | Node-wide peer count at the slot tick. This is a proxy, not per-subnet peer count. |
+| `Δ blk` | deferred | Not available yet; requires a sentry view of the aggregator's block choice. |
+| `propag` | p2p watcher | Time from slot start until the p2p watcher first saw this attestation on gossip. |
+| `subnet` | chain indexer | Deterministic attestation gossip subnet for the duty. |
+| `seen by` | deferred | Not available yet; requires sentry peer attribution. |
+| `fault` | derived | First-match fault classification from `attestation_diagnostics`. |
+
 ## Operator notes
 
 ### Lighthouse debug logs — already working, every slot

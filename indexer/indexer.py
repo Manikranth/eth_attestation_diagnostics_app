@@ -22,9 +22,14 @@ CH_USER = os.environ.get("CLICKHOUSE_USER", "attmon")
 CH_PASSWORD = os.environ.get("CLICKHOUSE_PASSWORD", "attmon")
 VC_LOG_PATH = os.environ.get("VC_LOG_PATH", "/var/log/lighthouse-vc/validator.log")
 BACKFILL_EPOCHS = int(os.environ.get("BACKFILL_EPOCHS", "3"))
-# How many trailing epochs to re-evaluate each poll once the node is trusted,
-# so vote verdicts written while it was still syncing get overwritten (self-heal).
-REEVAL_EPOCHS = int(os.environ.get("REEVAL_EPOCHS", "8"))
+# Trailing window re-judged every poll once the node is trusted, so a head/target
+# verdict that looked right at head-2 gets CORRECTED as a reorg settles toward
+# finality (this is what makes the dashboard agree with beaconcha.in). Must
+# comfortably exceed finality (~2 epochs); default 6.
+REEVAL_EPOCHS = int(os.environ.get("REEVAL_EPOCHS", "6"))
+# How far back to hunt for epochs still carrying a NULL verdict (written while
+# the node was syncing) and re-judge them once the node is trusted (self-heal).
+REEVAL_NULL_LOOKBACK = int(os.environ.get("REEVAL_NULL_LOOKBACK", "64"))
 POLL_SECONDS = int(os.environ.get("POLL_SECONDS", "60"))
 
 SLOTS_PER_EPOCH = 32
@@ -229,22 +234,32 @@ def get_finalized_epoch():
     return int(data["finalized"]["epoch"])
 
 
+HEAD_LAG_TRUST_SLOTS = int(os.environ.get("HEAD_LAG_TRUST_SLOTS", "2"))
+
+
 def node_is_optimistic():
-    """True if the beacon node's head is optimistic, still syncing, or its EL
-    is offline — states in which its canonical view can't be trusted for
+    """True if the node's view of recent canonical blocks can't be trusted for
     vote-correctness verdicts. On any error, treat as untrusted.
 
-    While the node range-syncs, `/eth/v1/beacon/headers/{slot}` returns an
-    unstable optimistic head, so `head_correct` computed against it disagrees
-    with the settled canonical chain (the false-green head-vote bug). We write
-    NULL verdicts in that window and re-evaluate once the node is trusted.
+    Trust is broken when the head is optimistically imported (EL not verified,
+    can still reorg), the EL is offline, or the head is still lagging real time
+    (`sync_distance` large) — then `/headers/{slot}` near the head returns an
+    unstable chain and `head_correct` disagrees with the settled/finalized
+    chain beaconcha.in uses (the false-✓ head-vote bug). We write NULL in that
+    window and re-judge once trusted.
+
+    NOTE: pure historical backfill (`is_syncing=true` but `sync_distance≈0`,
+    head at the tip) does NOT break trust — the head-2 epochs we judge are
+    already settled at the synced head. So we gate on sync_distance, not the
+    raw is_syncing flag, or every row would read '–' forever during backfill.
     """
     try:
         d = beacon_get("/eth/v1/beacon/syncing")["data"]
+        sync_distance = int(d.get("sync_distance", 0))
         return (
             bool(d.get("is_optimistic"))
-            or bool(d.get("is_syncing"))
             or bool(d.get("el_offline"))
+            or sync_distance > HEAD_LAG_TRUST_SLOTS
         )
     except Exception:
         log.warning("could not read /eth/v1/beacon/syncing; treating node as untrusted")
@@ -508,6 +523,21 @@ def last_processed_epoch(validators):
     return int(txt) if txt and txt != "0" else None
 
 
+def unresolved_verdict_epochs(validators, floor_epoch):
+    """Recent epochs whose head verdict is still NULL — written while the node
+    was syncing/optimistic. Reprocessed once the node is trusted so they
+    self-heal into a real ✓/✗ instead of staying '–' forever."""
+    if not validators:
+        return []
+    floor = max(floor_epoch, 0)
+    txt = ch_query(
+        "SELECT DISTINCT epoch FROM attmon.chain_attestations "
+        f"WHERE validator_index IN ({','.join(map(str, validators))}) "
+        f"AND head_correct IS NULL AND epoch >= {floor}"
+    ).strip()
+    return [int(x) for x in txt.split() if x]
+
+
 def main():
     ensure_schema()
     log.info("starting: beacon=%s backfill=%s epochs", BEACON_URL, BACKFILL_EPOCHS)
@@ -525,20 +555,23 @@ def main():
             trustworthy = not node_is_optimistic()
             done = last_processed_epoch(validators)
             start_new = (done + 1) if done else max(target - BACKFILL_EPOCHS + 1, 0)
-            # When the node is trusted, walk back over a trailing window and
-            # overwrite verdicts that were written NULL while it was syncing
-            # (ReplacingMergeTree dedups on inserted_at). When untrusted, only
-            # move forward — recomputing would just re-write NULLs.
-            start = (
-                min(start_new, max(target - REEVAL_EPOCHS + 1, 0))
-                if trustworthy
-                else start_new
-            )
+            # Forward: every not-yet-processed epoch.
+            todo = set(range(start_new, target + 1))
+            if trustworthy:
+                # (1) Re-judge a trailing window every poll so a verdict that
+                #     looked ✓/✗ at head-2 gets CORRECTED as the reorg settles
+                #     — this is what makes head votes agree with beaconcha.in.
+                todo.update(range(max(target - REEVAL_EPOCHS + 1, 0), target + 1))
+                # (2) Re-judge any recent epoch still carrying a NULL verdict
+                #     (written while syncing) so it self-heals once trusted.
+                todo.update(unresolved_verdict_epochs(validators, target - REEVAL_NULL_LOOKBACK))
+            # ReplacingMergeTree(inserted_at) dedups: a reprocessed epoch's newer
+            # rows win, so re-judging overwrites stale verdicts in place.
             log.info(
-                "target=%s trusted=%s processing epochs %s..%s",
-                target, trustworthy, start, target,
+                "target=%s trusted=%s re-judging %s epoch(s)",
+                target, trustworthy, len(todo),
             )
-            for epoch in range(start, target + 1):
+            for epoch in sorted(todo):
                 process_epoch(epoch, genesis_time, validators, trustworthy)
         except Exception:
             log.exception("epoch processing failed; retrying next poll")
