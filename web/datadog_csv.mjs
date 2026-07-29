@@ -510,32 +510,26 @@ function csvMatchesClickhouseRow(csvRow, chRow) {
   return isBlank(csvRow.validator_index) && isBlank(csvRow.validator_pubkey);
 }
 
-function mergeOneDiagnosticsRow(chRow, csvRows) {
-  const merged = { ...chRow };
-  for (const csvRow of csvRows) {
-    if (!csvMatchesClickhouseRow(csvRow, chRow)) continue;
-    for (const [key, value] of Object.entries(csvRow)) {
-      if (isBlank(value)) continue;
-      if (key === 'fault_attribution' && !isBlank(merged[key]) && merged[key] !== 'unknown') continue;
-      if (isBlank(merged[key])) merged[key] = value;
+function mergeOneCsvRow(csvRow, clickhouseRows) {
+  const match = clickhouseRows.find(chRow => csvMatchesClickhouseRow(csvRow, chRow));
+  if (!match) return csvRow;
+  const merged = { ...csvRow };
+  for (const [key, value] of Object.entries(match)) {
+    if (isBlank(value)) continue;
+    if (key === 'fault_attribution' && (merged[key] === 'log_preview' || merged[key] === 'unknown' || isBlank(merged[key]))) {
+      merged[key] = value;
+      continue;
     }
+    if (isBlank(merged[key])) merged[key] = value;
   }
   return merged;
 }
 
 export function mergeDiagnosticsRows(clickhouseRows, csvRows) {
   if (!clickhouseRows.length) return csvRows;
-  const merged = clickhouseRows.map(row => mergeOneDiagnosticsRow(row, csvRows));
-  const matchedCsv = new Set();
-  for (const chRow of clickhouseRows) {
-    csvRows.forEach((csvRow, i) => {
-      if (csvMatchesClickhouseRow(csvRow, chRow)) matchedCsv.add(i);
-    });
-  }
-  csvRows.forEach((csvRow, i) => {
-    if (!matchedCsv.has(i)) merged.push(csvRow);
-  });
-  return merged.sort((a, b) => (b.slot ?? 0) - (a.slot ?? 0));
+  return csvRows
+    .map(row => mergeOneCsvRow(row, clickhouseRows))
+    .sort((a, b) => (Number(b.slot) || 0) - (Number(a.slot) || 0));
 }
 
 export function parseDatadogCsv(text, overrides = {}) {

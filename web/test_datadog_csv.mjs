@@ -186,7 +186,7 @@ test('mergeDiagnosticsRows keeps ClickHouse facts and fills blanks from CSV logs
   }];
   const csvRows = [{
     slot: 3590633,
-    validator_index: null,
+    validator_index: 12345,
     validator_pubkey: '',
     inclusion_distance: null,
     fault_attribution: 'log_preview',
@@ -204,7 +204,7 @@ test('mergeDiagnosticsRows keeps ClickHouse facts and fills blanks from CSV logs
   assert.equal(merged[0].peers, 200);
 });
 
-test('mergeDiagnosticsRows keeps all ClickHouse slot rows even when CSV identity differs', () => {
+test('mergeDiagnosticsRows does not render ClickHouse-only rows when CSV identity differs', () => {
   const clickhouseRows = [{
     slot: 3590633,
     validator_index: 99999,
@@ -222,9 +222,9 @@ test('mergeDiagnosticsRows keeps all ClickHouse slot rows even when CSV identity
 
   const merged = mergeDiagnosticsRows(clickhouseRows, csvRows);
 
-  assert.equal(merged.length, 2);
-  assert.ok(merged.some(r => r.validator_index === 99999 && r.fault_attribution === 'perfect'));
-  assert.ok(merged.some(r => r.validator_index === 12345 && r.fault_attribution === 'vc_head_event_failed'));
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0].validator_index, 12345);
+  assert.equal(merged[0].fault_attribution, 'vc_head_event_failed');
 });
 
 test('parseDatadogCsvFiles combines separate BN and VC exports into one slot window', () => {
