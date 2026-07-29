@@ -180,6 +180,9 @@ class Handler(BaseHTTPRequestHandler):
         elif parsed.path in ("/", "/index.html"):
             with open(os.path.join(HERE, "index.html"), "rb") as f:
                 self._send(200, f.read(), "text/html; charset=utf-8")
+        elif parsed.path == "/datadog_csv.mjs":
+            with open(os.path.join(HERE, "datadog_csv.mjs"), "rb") as f:
+                self._send(200, f.read(), "text/javascript; charset=utf-8")
         else:
             self._send(404, b"not found", "text/plain")
 

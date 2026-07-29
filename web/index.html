@@ -79,6 +79,37 @@
   }
   button.paused { color: var(--amber); border-color: var(--amber); }
 
+  .tabs {
+    display: flex; gap: .5rem; align-items: center;
+    padding: .6rem 1.4rem;
+    border-bottom: 1px solid var(--line);
+    background: #09100c;
+  }
+  .tab {
+    color: var(--dim);
+    min-width: 12rem;
+    text-align: center;
+  }
+  .tab.active {
+    color: var(--phosphor);
+    border-color: var(--phosphor);
+    box-shadow: var(--glow);
+  }
+  .csvbar {
+    display: flex; gap: .8rem; align-items: center; flex-wrap: wrap;
+    padding: .65rem 1.4rem;
+    border-bottom: 1px solid var(--line);
+    background: var(--bg-raise);
+  }
+  .csvbar.hidden { display: none; }
+  .csvbar input[type="file"] {
+    width: 24rem; max-width: 100%;
+  }
+  .csvbar select { min-width: 10rem; }
+  .csvbar .wide { min-width: 18rem; }
+  .csvbar .stat { color: var(--dim); font-size: .74rem; letter-spacing: .05em; }
+  .csvbar .stat b { color: var(--text); }
+
   .chips {
     display: flex; gap: .6rem; flex-wrap: wrap;
     padding: .7rem 1.4rem;
@@ -226,6 +257,7 @@
   .pill.included_late      { color: var(--amber); border-color: rgba(255,180,84,.4); background: rgba(255,180,84,.07); }
   .pill.partial_success    { color: var(--amber); border-color: rgba(255,180,84,.4); background: rgba(255,180,84,.07); }
   .pill.aggregator_missed  { color: var(--cyan); border-color: rgba(89,215,255,.4); background: rgba(89,215,255,.07); }
+  .pill.log_preview        { color: var(--cyan); border-color: rgba(89,215,255,.4); background: rgba(89,215,255,.07); }
   .pill.wrong_head_vote, .pill.propagation_too_slow,
   .pill.node_broadcast_issue, .pill.block_arrived_late,
   .pill.vc_produce_failed, .pill.no_block_in_slot
@@ -264,6 +296,25 @@
     <button id="pause">❚❚ pause</button>
   </div>
 </header>
+
+<nav class="tabs" aria-label="data source tabs">
+  <button class="tab active" id="liveTab">live diagnostics</button>
+  <button class="tab" id="datadogTab">datadog csv</button>
+</nav>
+
+<div class="csvbar hidden" id="csvPanel">
+  <label class="meta" for="csvFile">csv</label>
+  <input id="csvFile" type="file" accept=".csv,text/csv">
+  <label class="meta" for="csvTimestamp">time</label>
+  <select id="csvTimestamp"></select>
+  <label class="meta" for="csvMessage">message</label>
+  <select class="wide" id="csvMessage"></select>
+  <label class="meta" for="csvSource">source</label>
+  <select id="csvSource"></select>
+  <button id="csvApply">render</button>
+  <button id="csvClear">clear csv</button>
+  <span class="stat" id="csvStats">no csv loaded</span>
+</div>
 
 <div class="chips" id="chips"></div>
 
@@ -418,12 +469,15 @@
   <span class="dim">full data: ClickHouse localhost:8123 attmon.attestation_diagnostics / attmon.node_events (user attmon)</span>
 </footer>
 
-<script>
+<script type="module">
+import { parseCsv, detectDatadogMapping, parseDatadogCsv } from './datadog_csv.mjs';
+
 const POLL_MS = 12000;           // one slot
 // inFlight: never let a second request start while one is outstanding. A slow
 // query used to mean the 12s timer fired anyway, stacking requests until both
 // the browser and ClickHouse fell over.
 let paused = false, lastSlots = new Set(), timerEnd = 0, inFlight = false;
+let activeTab = 'live', liveRows = [], csvRows = [], csvText = '', csvHeaders = [];
 
 const FIELD_OPTIONS = [
   ['fault_attribution', 'fault'],
@@ -695,11 +749,13 @@ function renderRows(rows) {
     chip('block_arrived_late', faults.block_arrived_late, 'bad') +
     chip('vc_produce_failed', faults.vc_produce_failed, 'bad') +
     chip('no_block_in_slot', faults.no_block_in_slot, 'bad') +
+    chip('log_preview', faults.log_preview, '') +
     chip('unknown', faults.unknown, '') ||
     '<span class="chip">no data yet</span>';
 }
 
 async function refresh() {
+  if (activeTab !== 'live') return;
   if (inFlight) return;          // previous poll still running — skip this tick
   inFlight = true;
   try {
@@ -718,7 +774,8 @@ async function refresh() {
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
     if (data.error) throw new Error(data.error);
-    renderRows(data.rows);
+    liveRows = data.rows;
+    renderRows(liveRows);
     $('live').className = 'live'; $('livetext').textContent = 'LIVE';
     $('updated').textContent = 'last update ' + new Date().toISOString().slice(11, 19) + ' utc';
   } catch (e) {
@@ -728,6 +785,58 @@ async function refresh() {
     inFlight = false;
     timerEnd = Date.now() + POLL_MS;
   }
+}
+
+function setTab(tab) {
+  activeTab = tab;
+  $('liveTab').className = tab === 'live' ? 'tab active' : 'tab';
+  $('datadogTab').className = tab === 'datadog' ? 'tab active' : 'tab';
+  $('csvPanel').className = tab === 'datadog' ? 'csvbar' : 'csvbar hidden';
+  lastSlots = new Set();
+  if (tab === 'live') {
+    renderRows(liveRows);
+    $('live').className = paused ? 'live stale' : 'live';
+    $('livetext').textContent = paused ? 'PAUSED' : 'LIVE';
+    $('next').textContent = paused ? 'paused' : 'next refresh ' + Math.max(0, Math.ceil((timerEnd - Date.now()) / 1000)) + 's';
+    if (!paused && liveRows.length === 0) refresh();
+  } else {
+    renderRows(csvRows);
+    $('live').className = 'live stale';
+    $('livetext').textContent = csvRows.length ? 'CSV' : 'CSV READY';
+    $('updated').textContent = csvRows.length ? 'csv preview loaded' : 'upload a Datadog CSV';
+    $('next').textContent = 'csv preview';
+  }
+}
+
+function optionList(headers, selected, allowBlank) {
+  const blank = allowBlank ? '<option value="">–</option>' : '';
+  return blank + headers
+    .map(h => `<option value="${esc(h)}"${h === selected ? ' selected' : ''}>${esc(h)}</option>`)
+    .join('');
+}
+
+function populateCsvMapping(headers, mapping) {
+  $('csvTimestamp').innerHTML = optionList(headers, mapping.timestamp, true);
+  $('csvMessage').innerHTML = optionList(headers, mapping.message, false);
+  $('csvSource').innerHTML = optionList(headers, mapping.source, true);
+}
+
+function renderCsvWithMapping() {
+  if (!csvText) return;
+  const result = parseDatadogCsv(csvText, {
+    timestamp: $('csvTimestamp').value,
+    message: $('csvMessage').value,
+    source: $('csvSource').value,
+  });
+  csvRows = result.rows;
+  lastSlots = new Set();
+  renderRows(csvRows);
+  $('csvStats').innerHTML =
+    `rows <b>${result.stats.totalRows}</b> · events <b>${result.stats.parsedEvents}</b> · ignored <b>${result.stats.ignoredRows}</b> · table rows <b>${csvRows.length}</b>`;
+  $('live').className = csvRows.length ? 'live stale' : 'live err';
+  $('livetext').textContent = csvRows.length ? 'CSV' : 'NO CSV ROWS';
+  $('updated').textContent = csvRows.length ? 'csv preview loaded' : 'csv had no recognized Lighthouse rows';
+  $('next').textContent = 'csv preview';
 }
 
 setInterval(() => {
@@ -745,6 +854,8 @@ $('pause').onclick = () => {
   $('livetext').textContent = paused ? 'PAUSED' : 'LIVE';
   if (!paused) refresh();
 };
+$('liveTab').onclick = () => setTab('live');
+$('datadogTab').onclick = () => setTab('datadog');
 $('epochs').onchange = refresh;
 $('epochFilter').onchange = refresh;
 $('slotFilter').onchange = refresh;
@@ -758,6 +869,30 @@ $('clearFilters').onclick = () => {
   $('slotFilter').value = '';
   $('fieldValue').value = '';
   refresh();
+};
+$('csvFile').onchange = async () => {
+  const file = $('csvFile').files[0];
+  if (!file) return;
+  csvText = await file.text();
+  const parsed = parseCsv(csvText);
+  csvHeaders = parsed.headers;
+  const mapping = detectDatadogMapping(csvHeaders);
+  populateCsvMapping(csvHeaders, mapping);
+  $('csvStats').innerHTML = `loaded <b>${esc(file.name)}</b> · csv rows <b>${parsed.rows.length}</b>`;
+  renderCsvWithMapping();
+};
+$('csvApply').onclick = renderCsvWithMapping;
+$('csvClear').onclick = () => {
+  csvText = '';
+  csvHeaders = [];
+  csvRows = [];
+  $('csvFile').value = '';
+  $('csvTimestamp').innerHTML = '';
+  $('csvMessage').innerHTML = '';
+  $('csvSource').innerHTML = '';
+  $('csvStats').textContent = 'no csv loaded';
+  lastSlots = new Set();
+  renderRows([]);
 };
 
 initFieldFilter();

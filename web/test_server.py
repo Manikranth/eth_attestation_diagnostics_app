@@ -66,6 +66,23 @@ class DiagnosticsFilterTest(unittest.TestCase):
         self.assertEqual(body["code"], 400)
         self.assertEqual(body["json"]["error"], "bad field")
 
+    def test_serves_datadog_csv_module(self):
+        handler = server.Handler.__new__(server.Handler)
+        handler.path = "/datadog_csv.mjs"
+        sent = {}
+
+        def capture_send(code, body, ctype):
+            sent["code"] = code
+            sent["body"] = body
+            sent["ctype"] = ctype
+
+        handler._send = capture_send
+        server.Handler.do_GET(handler)
+
+        self.assertEqual(sent["code"], 200)
+        self.assertEqual(sent["ctype"], "text/javascript; charset=utf-8")
+        self.assertIn(b"parseDatadogCsv", sent["body"])
+
 
 if __name__ == "__main__":
     unittest.main()
