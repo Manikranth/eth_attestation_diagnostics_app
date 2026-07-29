@@ -826,12 +826,6 @@ async function fetchCsvDiagnostics(stats) {
   const params = new URLSearchParams();
   params.set('from_slot', stats.minSlot);
   params.set('to_slot', stats.maxSlot);
-  if (stats.validatorIndices.length) {
-    params.set('validators', stats.validatorIndices.join(','));
-  }
-  if (stats.validatorPubkeys.length) {
-    params.set('pubkeys', stats.validatorPubkeys.join(','));
-  }
   const res = await fetch('/api/diagnostics?' + params.toString());
   if (!res.ok) throw new Error('diagnostics HTTP ' + res.status);
   const data = await res.json();
@@ -855,7 +849,7 @@ async function renderCsvWithMapping() {
     lastSlots = new Set();
     renderRows(csvRows);
     $('csvStats').innerHTML =
-      `rows <b>${result.stats.totalRows}</b> · events <b>${result.stats.parsedEvents}</b> · ignored <b>${result.stats.ignoredRows}</b> · slots <b>${result.stats.minSlot ?? '–'}-${result.stats.maxSlot ?? '–'}</b> · clickhouse <b>${diagnosticsRows.length}</b> · table rows <b>${csvRows.length}</b>`;
+      `rows <b>${result.stats.totalRows}</b> · events <b>${result.stats.parsedEvents}</b> · ignored <b>${result.stats.ignoredRows}</b> · slots <b>${result.stats.minSlot ?? '–'}-${result.stats.maxSlot ?? '–'}</b> · clickhouse slot rows <b>${diagnosticsRows.length}</b> · table rows <b>${csvRows.length}</b>`;
     $('live').className = csvRows.length ? 'live stale' : 'live err';
     $('livetext').textContent = csvRows.length ? 'CSV+CH' : 'NO CSV ROWS';
     $('updated').textContent = csvRows.length ? 'csv enriched from ClickHouse diagnostics' : 'csv had no recognized rows and no diagnostics matches';

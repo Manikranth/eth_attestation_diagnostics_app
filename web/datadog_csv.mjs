@@ -500,7 +500,7 @@ function isBlank(value) {
 }
 
 function csvMatchesClickhouseRow(csvRow, chRow) {
-  if (csvRow.slot !== chRow.slot) return false;
+  if (Number(csvRow.slot) !== Number(chRow.slot)) return false;
   if (!isBlank(csvRow.validator_index) && !isBlank(chRow.validator_index)) {
     return Number(csvRow.validator_index) === Number(chRow.validator_index);
   }

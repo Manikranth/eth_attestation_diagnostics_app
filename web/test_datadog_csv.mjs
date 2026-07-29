@@ -170,7 +170,7 @@ test('parseDatadogCsv maps signer pubkey and signer latency', () => {
 
 test('mergeDiagnosticsRows keeps ClickHouse facts and fills blanks from CSV logs', () => {
   const clickhouseRows = [{
-    slot: 3590633,
+    slot: '3590633',
     validator_index: 12345,
     validator_pubkey: '0xabc',
     inclusion_distance: 1,
@@ -196,4 +196,27 @@ test('mergeDiagnosticsRows keeps ClickHouse facts and fills blanks from CSV logs
   assert.equal(merged[0].fault_attribution, 'perfect');
   assert.equal(merged[0].block_seen_ms, 1339);
   assert.equal(merged[0].peers, 200);
+});
+
+test('mergeDiagnosticsRows keeps all ClickHouse slot rows even when CSV identity differs', () => {
+  const clickhouseRows = [{
+    slot: 3590633,
+    validator_index: 99999,
+    validator_pubkey: '0xchain',
+    inclusion_distance: 1,
+    fault_attribution: 'perfect',
+  }];
+  const csvRows = [{
+    slot: 3590633,
+    validator_index: 12345,
+    validator_pubkey: '',
+    att_failures: 1,
+    fault_attribution: 'vc_head_event_failed',
+  }];
+
+  const merged = mergeDiagnosticsRows(clickhouseRows, csvRows);
+
+  assert.equal(merged.length, 2);
+  assert.ok(merged.some(r => r.validator_index === 99999 && r.fault_attribution === 'perfect'));
+  assert.ok(merged.some(r => r.validator_index === 12345 && r.fault_attribution === 'vc_head_event_failed'));
 });
