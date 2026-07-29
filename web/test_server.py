@@ -110,6 +110,23 @@ class DiagnosticsFilterTest(unittest.TestCase):
         self.assertEqual(sent["ctype"], "text/javascript; charset=utf-8")
         self.assertIn(b"parseDatadogCsv", sent["body"])
 
+    def test_serves_slot_chart_module(self):
+        handler = server.Handler.__new__(server.Handler)
+        handler.path = "/slot_chart.mjs"
+        sent = {}
+
+        def capture_send(code, body, ctype):
+            sent["code"] = code
+            sent["body"] = body
+            sent["ctype"] = ctype
+
+        handler._send = capture_send
+        server.Handler.do_GET(handler)
+
+        self.assertEqual(sent["code"], 200)
+        self.assertEqual(sent["ctype"], "text/javascript; charset=utf-8")
+        self.assertIn(b"stageSegments", sent["body"])
+
 
 if __name__ == "__main__":
     unittest.main()
