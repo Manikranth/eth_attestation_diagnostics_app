@@ -20,6 +20,41 @@ services:
       retries: 20
     restart: unless-stopped
 
+  # One-shot schema migrator. The ClickHouse init scripts mounted at
+  # /docker-entrypoint-initdb.d ONLY run on a fresh volume, so schema changes
+  # pulled from git (new columns, view rewrites) never reach an existing
+  # deployment — the classic "repo SQL has block_processing_ms but the live
+  # view doesn't" skew. This re-applies clickhouse/init/*.sql on every
+  # `docker compose up`. Every statement is idempotent (CREATE DATABASE/TABLE
+  # IF NOT EXISTS, ADD/DROP COLUMN IF [NOT] EXISTS, CREATE OR REPLACE VIEW), so
+  # re-running is safe and keeps the live schema matching the repo. Runs once
+  # and exits; a failed migration surfaces as this container's non-zero exit.
+  schema-migrate:
+    image: clickhouse/clickhouse-server:24.8
+    container_name: attmon-schema-migrate
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    environment:
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-attmon}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-attmon}
+    volumes:
+      - ./clickhouse/init:/schema:ro
+    entrypoint:
+      - /bin/bash
+      - -c
+      - |
+        set -e
+        for f in /schema/*.sql; do
+          echo "applying $${f}"
+          clickhouse-client --host clickhouse \
+            --user "$${CLICKHOUSE_USER:-attmon}" \
+            --password "$${CLICKHOUSE_PASSWORD:-attmon}" \
+            --multiquery < "$${f}"
+        done
+        echo "schema up to date"
+    restart: "no"
+
   indexer:
     build: ./indexer
     container_name: attmon-indexer
