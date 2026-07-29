@@ -303,8 +303,8 @@
 </nav>
 
 <div class="csvbar hidden" id="csvPanel">
-  <label class="meta" for="csvFile">csv</label>
-  <input id="csvFile" type="file" accept=".csv,text/csv">
+  <label class="meta" for="csvFile">csvs</label>
+  <input id="csvFile" type="file" accept=".csv,text/csv" multiple>
   <label class="meta" for="csvTimestamp">time</label>
   <select id="csvTimestamp"></select>
   <label class="meta" for="csvMessage">message</label>
@@ -470,14 +470,14 @@
 </footer>
 
 <script type="module">
-import { parseCsv, detectDatadogMapping, mergeDiagnosticsRows, parseDatadogCsv } from './datadog_csv.mjs';
+import { parseCsv, detectDatadogMapping, mergeDiagnosticsRows, parseDatadogCsvFiles } from './datadog_csv.mjs';
 
 const POLL_MS = 12000;           // one slot
 // inFlight: never let a second request start while one is outstanding. A slow
 // query used to mean the 12s timer fired anyway, stacking requests until both
 // the browser and ClickHouse fell over.
 let paused = false, lastSlots = new Set(), timerEnd = 0, inFlight = false;
-let activeTab = 'live', liveRows = [], csvRows = [], csvText = '', csvHeaders = [];
+let activeTab = 'live', liveRows = [], csvRows = [], csvFiles = [], csvHeaders = [];
 
 const FIELD_OPTIONS = [
   ['fault_attribution', 'fault'],
@@ -821,6 +821,28 @@ function populateCsvMapping(headers, mapping) {
   $('csvSource').innerHTML = optionList(headers, mapping.source, true);
 }
 
+function compactCounts(counts, limit = 5) {
+  return Object.entries(counts || {})
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, limit)
+    .map(([k, v]) => `${esc(k)}:${v}`)
+    .join(', ') || '–';
+}
+
+function csvDebugStats(result, diagnosticsRows, tableRows) {
+  return `files <b>${result.stats.fileCount ?? 1}</b>` +
+    ` · rows <b>${result.stats.totalRows}</b>` +
+    ` · events <b>${result.stats.parsedEvents}</b>` +
+    ` · ignored <b>${result.stats.ignoredRows}</b>` +
+    ` · time <b>${result.stats.minTimestamp ? result.stats.minTimestamp.slice(11, 19) : '–'}-${result.stats.maxTimestamp ? result.stats.maxTimestamp.slice(11, 19) : '–'}</b>` +
+    ` · slots <b>${result.stats.minSlot ?? '–'}-${result.stats.maxSlot ?? '–'}</b>` +
+    ` · csv slot rows <b>${result.rows.length}</b>` +
+    ` · clickhouse slot rows <b>${diagnosticsRows}</b>` +
+    ` · table rows <b>${tableRows}</b>` +
+    ` · services <b>${compactCounts(result.stats.serviceCounts, 3)}</b>` +
+    ` · parsed <b>${compactCounts(result.stats.eventCounts, 5)}</b>`;
+}
+
 async function fetchCsvDiagnostics(stats) {
   if (stats.minSlot === null || stats.maxSlot === null) return [];
   const params = new URLSearchParams();
@@ -834,8 +856,8 @@ async function fetchCsvDiagnostics(stats) {
 }
 
 async function renderCsvWithMapping() {
-  if (!csvText) return;
-  const result = parseDatadogCsv(csvText, {
+  if (!csvFiles.length) return;
+  const result = parseDatadogCsvFiles(csvFiles, {
     timestamp: $('csvTimestamp').value,
     message: $('csvMessage').value,
     source: $('csvSource').value,
@@ -848,8 +870,7 @@ async function renderCsvWithMapping() {
     csvRows = mergeDiagnosticsRows(diagnosticsRows, result.rows);
     lastSlots = new Set();
     renderRows(csvRows);
-    $('csvStats').innerHTML =
-      `rows <b>${result.stats.totalRows}</b> · events <b>${result.stats.parsedEvents}</b> · ignored <b>${result.stats.ignoredRows}</b> · slots <b>${result.stats.minSlot ?? '–'}-${result.stats.maxSlot ?? '–'}</b> · clickhouse slot rows <b>${diagnosticsRows.length}</b> · table rows <b>${csvRows.length}</b>`;
+    $('csvStats').innerHTML = csvDebugStats(result, diagnosticsRows.length, csvRows.length);
     $('live').className = csvRows.length ? 'live stale' : 'live err';
     $('livetext').textContent = csvRows.length ? 'CSV+CH' : 'NO CSV ROWS';
     $('updated').textContent = csvRows.length ? 'csv enriched from ClickHouse diagnostics' : 'csv had no recognized rows and no diagnostics matches';
@@ -857,8 +878,7 @@ async function renderCsvWithMapping() {
     csvRows = result.rows;
     lastSlots = new Set();
     renderRows(csvRows);
-    $('csvStats').innerHTML =
-      `rows <b>${result.stats.totalRows}</b> · events <b>${result.stats.parsedEvents}</b> · ignored <b>${result.stats.ignoredRows}</b> · clickhouse <b>error</b>`;
+    $('csvStats').innerHTML = csvDebugStats(result, 'error', csvRows.length);
     $('live').className = csvRows.length ? 'live stale' : 'live err';
     $('livetext').textContent = csvRows.length ? 'CSV ONLY' : 'NO CSV ROWS';
     $('updated').textContent = 'ClickHouse enrichment failed: ' + e.message;
@@ -899,19 +919,23 @@ $('clearFilters').onclick = () => {
   refresh();
 };
 $('csvFile').onchange = async () => {
-  const file = $('csvFile').files[0];
-  if (!file) return;
-  csvText = await file.text();
-  const parsed = parseCsv(csvText);
+  const files = [...$('csvFile').files];
+  if (!files.length) return;
+  csvFiles = await Promise.all(files.map(async file => ({
+    name: file.name,
+    text: await file.text(),
+  })));
+  const parsed = parseCsv(csvFiles[0].text);
   csvHeaders = parsed.headers;
   const mapping = detectDatadogMapping(csvHeaders);
   populateCsvMapping(csvHeaders, mapping);
-  $('csvStats').innerHTML = `loaded <b>${esc(file.name)}</b> · csv rows <b>${parsed.rows.length}</b>`;
+  const totalRows = csvFiles.reduce((sum, file) => sum + parseCsv(file.text).rows.length, 0);
+  $('csvStats').innerHTML = `loaded <b>${csvFiles.length}</b> files · csv rows <b>${totalRows}</b>`;
   await renderCsvWithMapping();
 };
 $('csvApply').onclick = renderCsvWithMapping;
 $('csvClear').onclick = () => {
-  csvText = '';
+  csvFiles = [];
   csvHeaders = [];
   csvRows = [];
   $('csvFile').value = '';

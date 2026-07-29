@@ -552,15 +552,35 @@ export function parseDatadogCsv(text, overrides = {}) {
   }
 
   const events = [];
+  const ignoredSamples = [];
+  const serviceCounts = {};
+  let minTimestampMs = null;
+  let maxTimestampMs = null;
   let ignoredRows = 0;
   for (const row of parsed.rows) {
+    const service = mapping.source ? (row[mapping.source] || '') : '';
+    serviceCounts[service || '(blank)'] = (serviceCounts[service || '(blank)'] || 0) + 1;
+    const tsMs = normalizeTimestamp(mapping.timestamp ? row[mapping.timestamp] : '', mapping.message ? row[mapping.message] : '');
+    if (Number.isFinite(tsMs)) {
+      minTimestampMs = minTimestampMs === null ? tsMs : Math.min(minTimestampMs, tsMs);
+      maxTimestampMs = maxTimestampMs === null ? tsMs : Math.max(maxTimestampMs, tsMs);
+    }
     const event = parseLogEvent(row, mapping);
     if (event) events.push(event);
-    else ignoredRows++;
+    else {
+      ignoredRows++;
+      if (ignoredSamples.length < 5) {
+        ignoredSamples.push(String(mapping.message ? row[mapping.message] : '').slice(0, 180));
+      }
+    }
   }
   const slots = [...new Set(events.map(e => e.slot).filter(v => v !== null && v !== undefined))].sort((a, b) => a - b);
   const validatorIndices = [...new Set(events.map(e => e.validator_index).filter(v => v !== null && v !== undefined))].sort((a, b) => a - b);
   const validatorPubkeys = [...new Set(events.map(e => e.validator_pubkey).filter(Boolean))].sort();
+  const eventCounts = {};
+  for (const event of events) {
+    eventCounts[event.event] = (eventCounts[event.event] || 0) + 1;
+  }
 
   return {
     headers: parsed.headers,
@@ -571,11 +591,87 @@ export function parseDatadogCsv(text, overrides = {}) {
       totalRows: parsed.rows.length,
       parsedEvents: events.length,
       ignoredRows,
+      minTimestamp: minTimestampMs === null ? null : new Date(minTimestampMs).toISOString(),
+      maxTimestamp: maxTimestampMs === null ? null : new Date(maxTimestampMs).toISOString(),
       minSlot: slots.length ? slots[0] : null,
       maxSlot: slots.length ? slots[slots.length - 1] : null,
       slots,
       validatorIndices,
       validatorPubkeys,
+      serviceCounts,
+      eventCounts,
+      ignoredSamples,
+    },
+  };
+}
+
+function mergeCounts(target, source) {
+  for (const [key, value] of Object.entries(source || {})) {
+    target[key] = (target[key] || 0) + value;
+  }
+}
+
+export function parseDatadogCsvFiles(files, overrides = {}) {
+  const results = files.map(file => ({
+    name: file.name || 'csv',
+    result: parseDatadogCsv(file.text || '', overrides),
+  }));
+  const allEvents = results.flatMap(item => item.result.events || []);
+  const rows = buildDiagnosticRows(allEvents);
+  const slots = [...new Set(allEvents.map(e => e.slot).filter(v => v !== null && v !== undefined))].sort((a, b) => a - b);
+  const validatorIndices = [...new Set(allEvents.map(e => e.validator_index).filter(v => v !== null && v !== undefined))].sort((a, b) => a - b);
+  const validatorPubkeys = [...new Set(allEvents.map(e => e.validator_pubkey).filter(Boolean))].sort();
+  const serviceCounts = {};
+  const eventCounts = {};
+  const ignoredSamples = [];
+  let minTimestamp = null;
+  let maxTimestamp = null;
+  let totalRows = 0;
+  let parsedEvents = 0;
+  let ignoredRows = 0;
+
+  for (const { result } of results) {
+    totalRows += result.stats.totalRows || 0;
+    parsedEvents += result.stats.parsedEvents || 0;
+    ignoredRows += result.stats.ignoredRows || 0;
+    mergeCounts(serviceCounts, result.stats.serviceCounts);
+    mergeCounts(eventCounts, result.stats.eventCounts);
+    for (const sample of result.stats.ignoredSamples || []) {
+      if (ignoredSamples.length < 5) ignoredSamples.push(sample);
+    }
+    if (result.stats.minTimestamp) {
+      minTimestamp = minTimestamp === null || result.stats.minTimestamp < minTimestamp
+        ? result.stats.minTimestamp
+        : minTimestamp;
+    }
+    if (result.stats.maxTimestamp) {
+      maxTimestamp = maxTimestamp === null || result.stats.maxTimestamp > maxTimestamp
+        ? result.stats.maxTimestamp
+        : maxTimestamp;
+    }
+  }
+
+  return {
+    headers: results[0]?.result.headers || [],
+    mapping: results[0]?.result.mapping || {},
+    rows,
+    events: allEvents,
+    stats: {
+      fileCount: files.length,
+      fileNames: files.map(file => file.name || 'csv'),
+      totalRows,
+      parsedEvents,
+      ignoredRows,
+      minTimestamp,
+      maxTimestamp,
+      minSlot: slots.length ? slots[0] : null,
+      maxSlot: slots.length ? slots[slots.length - 1] : null,
+      slots,
+      validatorIndices,
+      validatorPubkeys,
+      serviceCounts,
+      eventCounts,
+      ignoredSamples,
     },
   };
 }

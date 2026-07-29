@@ -6,6 +6,7 @@ import {
   detectDatadogMapping,
   mergeDiagnosticsRows,
   parseDatadogCsv,
+  parseDatadogCsvFiles,
 } from './datadog_csv.mjs';
 
 test('parseCsv handles quoted commas and embedded newlines', () => {
@@ -107,6 +108,11 @@ test('parseDatadogCsv maps real Datadog beacon rows from Date Service Content', 
 
   assert.equal(result.stats.totalRows, 2);
   assert.equal(result.stats.parsedEvents, 2);
+  assert.equal(result.stats.serviceCounts['eth-staking'], 2);
+  assert.equal(result.stats.eventCounts.slot_timer, 1);
+  assert.equal(result.stats.eventCounts.new_block, 1);
+  assert.equal(result.stats.minTimestamp, '2026-07-29T04:56:37.339Z');
+  assert.equal(result.stats.maxTimestamp, '2026-07-29T04:56:54.349Z');
   assert.equal(result.rows.length, 2);
 
   const synced = result.rows.find(r => r.slot === 3590634);
@@ -219,4 +225,30 @@ test('mergeDiagnosticsRows keeps all ClickHouse slot rows even when CSV identity
   assert.equal(merged.length, 2);
   assert.ok(merged.some(r => r.validator_index === 99999 && r.fault_attribution === 'perfect'));
   assert.ok(merged.some(r => r.validator_index === 12345 && r.fault_attribution === 'vc_head_event_failed'));
+});
+
+test('parseDatadogCsvFiles combines separate BN and VC exports into one slot window', () => {
+  const bn = [
+    'Date,Host,Service,Content',
+    '2026-07-29T04:56:37.339Z,redacted-host,eth-staking,"INFO New block received slot: 3590633, root: 0x1234abcd"',
+  ].join('\n');
+  const vc = [
+    'Date,Host,Service,Content',
+    '2026-07-29T05:18:50.203Z,redacted-host,eth-staking-validator,"Failed to attest based on head event validators: [""12345""]"',
+  ].join('\n');
+
+  const result = parseDatadogCsvFiles([
+    { name: 'bn.csv', text: bn },
+    { name: 'vc.csv', text: vc },
+  ]);
+
+  assert.equal(result.stats.fileCount, 2);
+  assert.deepEqual(result.stats.fileNames, ['bn.csv', 'vc.csv']);
+  assert.equal(result.stats.totalRows, 2);
+  assert.equal(result.stats.parsedEvents, 2);
+  assert.equal(result.stats.minSlot, 3590633);
+  assert.equal(result.stats.maxSlot, 3590744);
+  assert.equal(result.stats.serviceCounts['eth-staking'], 1);
+  assert.equal(result.stats.serviceCounts['eth-staking-validator'], 1);
+  assert.equal(result.rows.length, 2);
 });
