@@ -62,13 +62,21 @@
   .live.err .dot { background: var(--red); animation: none; }
   @keyframes pulse { 50% { opacity: .35; } }
 
-  .controls { margin-left: auto; display: flex; gap: .8rem; align-items: center; }
-  select, button {
+  .controls { margin-left: auto; display: flex; gap: .8rem; align-items: center; flex-wrap: wrap; }
+  select, input, button {
     background: var(--bg); color: var(--text);
     border: 1px solid var(--line); border-radius: 3px;
-    font: inherit; font-size: .78rem; padding: .3em .6em; cursor: pointer;
+    font: inherit; font-size: .78rem; padding: .3em .6em;
   }
-  select:hover, button:hover { border-color: var(--phosphor); color: var(--phosphor); }
+  select, button { cursor: pointer; }
+  input { width: 8.5em; }
+  #fieldFilter { width: 13em; }
+  #fieldValue { width: 12em; }
+  input::placeholder { color: var(--dim); }
+  select:hover, input:hover, button:hover { border-color: var(--phosphor); color: var(--phosphor); }
+  input:focus {
+    outline: none; border-color: var(--phosphor); box-shadow: var(--glow);
+  }
   button.paused { color: var(--amber); border-color: var(--amber); }
 
   .chips {
@@ -245,6 +253,14 @@
     <select id="epochs">
       <option>5</option><option selected>10</option><option>25</option><option>50</option><option>100</option>
     </select>
+    <label class="meta" for="epochFilter">epoch</label>
+    <input id="epochFilter" type="number" inputmode="numeric" min="0" placeholder="exact">
+    <label class="meta" for="slotFilter">slot</label>
+    <input id="slotFilter" type="number" inputmode="numeric" min="0" placeholder="exact">
+    <label class="meta" for="fieldFilter">field</label>
+    <select id="fieldFilter"></select>
+    <input id="fieldValue" placeholder="exact value">
+    <button id="clearFilters">clear</button>
     <button id="pause">❚❚ pause</button>
   </div>
 </header>
@@ -414,6 +430,46 @@ const POLL_MS = 12000;           // one slot
 // the browser and ClickHouse fell over.
 let paused = false, lastSlots = new Set(), timerEnd = 0, inFlight = false;
 
+const FIELD_OPTIONS = [
+  ['fault_attribution', 'fault'],
+  ['validator_index', 'validator'],
+  ['validator_name', 'name'],
+  ['block_on_chain', 'on chain'],
+  ['proposer_index', 'proposer'],
+  ['exec_block_number', 'exec block#'],
+  ['current_head_exec_block', 'current head#'],
+  ['head_lag_slots', 'head lag'],
+  ['blob_count', 'blobs'],
+  ['graffiti', 'graffiti'],
+  ['head_correct', 'head'],
+  ['target_correct', 'tgt'],
+  ['source_correct', 'src'],
+  ['inclusion_slot', 'incl slot'],
+  ['inclusion_distance', 'dist'],
+  ['missed', 'missed'],
+  ['head_slot_at_tick', 'head@tick'],
+  ['node_behind_slots', 'behind'],
+  ['sync_state', 'sync'],
+  ['available_ms', 'Block available'],
+  ['block_seen_ms', 'Block arrival'],
+  ['blob_source', 'blob src'],
+  ['blobs_from_el', 'blobs from EL'],
+  ['cols_via_el', 'cols'],
+  ['consensus_verify_ms', 'BN consensus'],
+  ['el_verify_ms', 'EL verify'],
+  ['att_failures', 'VC fails'],
+  ['att_fail_reason', 'VC fail reasons'],
+  ['bottleneck', 'bottleneck'],
+  ['included_in_aggregate', 'in agg'],
+  ['aggregator_picked', 'picked'],
+  ['committee_index', 'cmts'],
+  ['committee_position', 'pos'],
+  ['agg_bits_set', 'agg bits'],
+  ['peers', 'peer'],
+  ['propagation_delay_ms', 'propag'],
+  ['subnet_id', 'subnet'],
+];
+
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 
@@ -495,6 +551,12 @@ function enhanceColumnHelp() {
     th.removeAttribute('title');
     th.innerHTML = `<span class="th-label"><span>${esc(label)}</span><span class="help-dot" tabindex="0" aria-label="${esc(label)} help">?<span class="help-panel">${help}</span></span></span>`;
   });
+}
+
+function initFieldFilter() {
+  $('fieldFilter').innerHTML = FIELD_OPTIONS
+    .map(([value, label]) => `<option value="${esc(value)}">${esc(label)}</option>`)
+    .join('');
 }
 
 // seconds in, prints "347ms" under 1s, "2.15s" from 1s up
@@ -655,7 +717,18 @@ async function refresh() {
   if (inFlight) return;          // previous poll still running — skip this tick
   inFlight = true;
   try {
-    const res = await fetch('/api/diagnostics?epochs=' + $('epochs').value);
+    const params = new URLSearchParams();
+    const exactEpoch = $('epochFilter').value.trim();
+    const exactSlot = $('slotFilter').value.trim();
+    const fieldValue = $('fieldValue').value.trim();
+    if (exactEpoch) params.set('epoch', exactEpoch);
+    if (exactSlot) params.set('slot', exactSlot);
+    if (fieldValue) {
+      params.set('field', $('fieldFilter').value);
+      params.set('value', fieldValue);
+    }
+    if (!exactEpoch && !exactSlot && !fieldValue) params.set('epochs', $('epochs').value);
+    const res = await fetch('/api/diagnostics?' + params.toString());
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
     if (data.error) throw new Error(data.error);
@@ -687,7 +760,21 @@ $('pause').onclick = () => {
   if (!paused) refresh();
 };
 $('epochs').onchange = refresh;
+$('epochFilter').onchange = refresh;
+$('slotFilter').onchange = refresh;
+$('fieldFilter').onchange = () => { if ($('fieldValue').value.trim()) refresh(); };
+$('fieldValue').onchange = refresh;
+$('epochFilter').onkeydown = e => { if (e.key === 'Enter') refresh(); };
+$('slotFilter').onkeydown = e => { if (e.key === 'Enter') refresh(); };
+$('fieldValue').onkeydown = e => { if (e.key === 'Enter') refresh(); };
+$('clearFilters').onclick = () => {
+  $('epochFilter').value = '';
+  $('slotFilter').value = '';
+  $('fieldValue').value = '';
+  refresh();
+};
 
+initFieldFilter();
 enhanceColumnHelp();
 refresh();
 </script>

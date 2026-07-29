@@ -28,6 +28,82 @@ CH_SETTINGS = {
     "cancel_http_readonly_queries_on_client_close": 1,  # abandon = cancel
 }
 
+FIELD_FILTER_COLUMNS = {
+    "epoch", "slot", "slot_start_utc", "validator_index", "validator_name",
+    "validator_pubkey", "block_on_chain", "proposer_index",
+    "exec_block_number", "current_head_exec_block", "head_lag_slots",
+    "blob_count", "graffiti", "head_correct", "target_correct",
+    "source_correct", "inclusion_slot", "inclusion_distance", "missed",
+    "head_slot_at_tick", "node_behind_slots", "sync_state", "available_ms",
+    "avail_dur_ms", "block_seen_ms", "gossip_late_by_ms", "proc_start_ms",
+    "proc_decode_ms", "proc_state_ms", "proc_forkchoice_ms",
+    "proc_dbread_ms", "proc_dbwrite_ms", "proc_postexec_ms", "blob_source",
+    "gossip_blob_arrival_ms", "blobs_from_el", "blobs_expected",
+    "cols_via_el", "blobs_ready_ms", "consensus_verify_ms", "el_verify_ms",
+    "imported_ms", "import_write_ms", "head_ready_ms", "set_as_head_ms",
+    "att_start_ms", "vc_publish_dur_ms", "att_failures", "att_fail_reason",
+    "bottleneck", "included_in_aggregate", "aggregator_picked",
+    "committee_index", "committee_position", "agg_bits_set",
+    "committee_size", "agg_published_ms", "peers", "propagation_delay_ms",
+    "subnet_id", "fault_attribution",
+}
+
+
+def parse_filter_int(qs, name):
+    raw = qs.get(name, [""])[0].strip()
+    if raw == "":
+        return None
+    try:
+        value = int(raw)
+    except ValueError:
+        raise ValueError(f"bad {name}")
+    if value < 0:
+        raise ValueError(f"bad {name}")
+    return value
+
+
+def sql_string(value):
+    return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+
+def generic_field_filter(qs):
+    field = qs.get("field", [""])[0].strip()
+    value = qs.get("value", [""])[0].strip()
+    if not field and not value:
+        return None
+    if field not in FIELD_FILTER_COLUMNS:
+        raise ValueError("bad field")
+    if value == "":
+        raise ValueError("bad value")
+    return f"toString({field}) = {sql_string(value)}"
+
+
+def diagnostics_sql(qs):
+    epoch = parse_filter_int(qs, "epoch")
+    slot = parse_filter_int(qs, "slot")
+    generic_filter = generic_field_filter(qs)
+    filters = []
+    if epoch is not None:
+        filters.append(f"epoch = {epoch}")
+    if slot is not None:
+        filters.append(f"slot = {slot}")
+    if generic_filter:
+        filters.append(generic_filter)
+    if filters:
+        where = " AND ".join(filters)
+    else:
+        epochs = parse_filter_int(qs, "epochs")
+        epochs = 10 if epochs is None else max(1, min(epochs, 500))
+        where = (
+            "epoch > (SELECT max(epoch) FROM attmon.chain_attestations)"
+            f" - {epochs}"
+        )
+    return (
+        "SELECT * FROM attmon.attestation_diagnostics "
+        f"WHERE {where} "
+        "ORDER BY slot DESC, validator_index FORMAT JSON"
+    )
+
 
 def ch_query(sql):
     url = CLICKHOUSE_URL + "?" + urlencode(CH_SETTINGS)
@@ -45,18 +121,17 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         if parsed.path == "/api/diagnostics":
             qs = parse_qs(parsed.query)
-            epochs = int(qs.get("epochs", ["10"])[0])
-            epochs = max(1, min(epochs, 500))
             try:
-                # Take max(epoch) from the raw table, NOT the view: the view is
-                # a multi-way join over an aggregation of every log event, so
-                # using it here materialised the whole thing twice per request.
-                data = ch_query(
-                    "SELECT * FROM attmon.attestation_diagnostics "
-                    "WHERE epoch > (SELECT max(epoch) FROM attmon.chain_attestations)"
-                    f" - {epochs} "
-                    "ORDER BY slot DESC, validator_index FORMAT JSON"
-                )
+                sql = diagnostics_sql(qs)
+            except ValueError as e:
+                self._send(400, json.dumps({"error": str(e)}).encode(), "application/json")
+                return
+            try:
+                # The rolling window takes max(epoch) from the raw table, NOT
+                # the view: the view is a multi-way join over an aggregation of
+                # every log event, so using it here materialised the whole thing
+                # twice per request.
+                data = ch_query(sql)
                 body = json.dumps({"rows": data["data"]}).encode()
                 self._send(200, body, "application/json")
             except Exception as e:
