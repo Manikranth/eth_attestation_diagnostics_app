@@ -125,222 +125,6 @@
   .chip.warn b { color: var(--amber); }
   .chip.bad b { color: var(--red); }
 
-  .slotviz {
-    position: relative;
-    border-bottom: 1px solid var(--line);
-    background: linear-gradient(180deg, #0d1510 0%, #080d0a 100%);
-    padding: .9rem 1.4rem 1rem;
-  }
-  .slotviz-head {
-    display: grid;
-    grid-template-columns: minmax(15rem, 1fr) auto auto;
-    gap: 1rem;
-    align-items: center;
-    margin-bottom: .8rem;
-  }
-  .slotviz h2 {
-    font-family: "Chakra Petch", sans-serif;
-    color: var(--phosphor);
-    font-size: .86rem;
-    font-weight: 700;
-    letter-spacing: .16em;
-    text-transform: uppercase;
-  }
-  .slotviz p {
-    margin-top: .25rem;
-    color: var(--dim);
-    font-size: .74rem;
-    letter-spacing: .04em;
-  }
-  .slotviz-legend {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: flex-end;
-    gap: .45rem .7rem;
-    color: var(--dim);
-    font-size: .68rem;
-  }
-  .slotviz-key {
-    display: inline-flex;
-    align-items: center;
-    gap: .32rem;
-    white-space: nowrap;
-  }
-  .slotviz-swatch {
-    width: .75rem;
-    height: .75rem;
-    border-radius: 2px;
-    border: 1px solid rgba(255,255,255,.12);
-  }
-  .slotviz-controls {
-    display: inline-flex;
-    gap: .45rem;
-    align-items: center;
-  }
-  .slotviz-controls button {
-    min-width: 4.6rem;
-    padding: .32em .6em;
-  }
-  .slotviz-controls button.active {
-    color: var(--phosphor);
-    border-color: var(--phosphor);
-    box-shadow: var(--glow);
-  }
-  .slotviz-body {
-    display: grid;
-    grid-template-columns: 3.2rem minmax(0, 1fr);
-    gap: .7rem;
-    min-height: 300px;
-  }
-  .slotviz-axis {
-    position: relative;
-    height: 260px;
-    margin-top: .25rem;
-    border-right: 1px solid var(--line);
-    color: var(--dim);
-    font-size: .68rem;
-  }
-  .slotviz-tick {
-    position: absolute;
-    right: .55rem;
-    transform: translateY(50%);
-    font-variant-numeric: tabular-nums;
-  }
-  .slotviz-tick::after {
-    content: "";
-    position: absolute;
-    left: calc(100% + .65rem);
-    top: 50%;
-    width: min(78vw, 1400px);
-    border-top: 1px solid rgba(28,40,34,.9);
-    pointer-events: none;
-  }
-  .slotviz-scroll {
-    overflow-x: auto;
-    overflow-y: hidden;
-    padding: .25rem .2rem .4rem;
-  }
-  .slotviz-plot {
-    --slot-bar-width: 44px;
-    --slot-bar-gap: .85rem;
-    display: flex;
-    align-items: flex-end;
-    gap: var(--slot-bar-gap);
-    min-height: 292px;
-    width: max-content;
-    min-width: 100%;
-  }
-  .slotviz-plot.compact {
-    --slot-bar-width: 30px;
-    --slot-bar-gap: .45rem;
-  }
-  .slotbar {
-    flex: 0 0 max(var(--slot-bar-width), 2rem);
-    display: grid;
-    grid-template-rows: 260px auto;
-    gap: .45rem;
-    justify-items: center;
-    color: var(--dim);
-  }
-  .slotbar-stack {
-    position: relative;
-    width: var(--slot-bar-width);
-    height: 260px;
-    align-self: end;
-    display: flex;
-    flex-direction: column-reverse;
-    justify-content: flex-start;
-    overflow: hidden;
-    border: 1px solid #26362d;
-    background:
-      linear-gradient(180deg, rgba(255,255,255,.025), rgba(0,0,0,.08)),
-      #070b09;
-    box-shadow: inset 0 0 0 1px rgba(0,0,0,.28);
-    cursor: pointer;
-    transition: border-color .16s ease, transform .16s ease, box-shadow .16s ease;
-  }
-  .slotbar-stack:hover,
-  .slotbar.hovered .slotbar-stack {
-    border-color: var(--phosphor);
-    box-shadow: var(--glow), inset 0 0 0 1px rgba(61,255,160,.18);
-  }
-  .slotbar.selected .slotbar-stack {
-    border-color: var(--amber);
-    box-shadow: 0 0 0 1px rgba(255,180,84,.45), 0 0 16px rgba(255,180,84,.25);
-  }
-  .slotbar-seg {
-    width: 100%;
-    min-height: 2px;
-    border-top: 1px solid rgba(0,0,0,.38);
-    cursor: help;
-  }
-  .slotbar-overflow {
-    position: absolute;
-    top: .22rem;
-    left: 50%;
-    transform: translateX(-50%);
-    color: var(--red);
-    font-size: .78rem;
-    text-shadow: 0 0 8px rgba(255,93,108,.55);
-    pointer-events: none;
-  }
-  .slotbar-label {
-    width: 5.2rem;
-    text-align: center;
-    font-size: .66rem;
-    line-height: 1.25;
-  }
-  .slotbar-label b {
-    display: block;
-    color: var(--text);
-    font-weight: 600;
-  }
-  .slotbar-label span {
-    display: block;
-    max-width: 100%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .stage-propagation { background: #3dffa0; }
-  .stage-blob { background: #59d7ff; }
-  .stage-verify { background: #ffcf5a; }
-  .stage-import { background: #ff8a4c; }
-  .stage-vc { background: #b889ff; }
-  .stage-missed {
-    background: repeating-linear-gradient(45deg, #ff5d6c, #ff5d6c 5px, #681c27 5px, #681c27 10px);
-  }
-  .slotviz-tooltip {
-    position: fixed;
-    z-index: 80;
-    width: min(320px, calc(100vw - 2rem));
-    padding: .75rem .85rem;
-    border: 1px solid var(--phosphor);
-    background: #07100b;
-    color: var(--text);
-    box-shadow: 0 16px 34px rgba(0,0,0,.5), var(--glow);
-    font-size: .74rem;
-    line-height: 1.45;
-    pointer-events: none;
-  }
-  .slotviz-tooltip b { color: var(--phosphor); font-weight: 600; }
-  .slotviz-tooltip .muted { color: var(--dim); }
-  .slotviz-empty {
-    min-height: 260px;
-    display: grid;
-    place-items: center;
-    color: var(--dim);
-    letter-spacing: .1em;
-    font-size: .76rem;
-  }
-  tbody tr.slot-hovered { background: #142018; }
-  tbody tr.slot-selected { background: rgba(255,180,84,.1); outline: 1px solid rgba(255,180,84,.35); outline-offset: -1px; }
-  @media (max-width: 860px) {
-    .slotviz-head { grid-template-columns: 1fr; align-items: start; }
-    .slotviz-legend { justify-content: flex-start; }
-    .slotviz-controls { flex-wrap: wrap; }
-  }
-
   .legend {
     border-bottom: 1px solid var(--line); background: var(--bg-raise);
     font-size: .78rem;
@@ -519,8 +303,8 @@
 </nav>
 
 <div class="csvbar hidden" id="csvPanel">
-  <label class="meta" for="csvFile">csvs</label>
-  <input id="csvFile" type="file" accept=".csv,text/csv" multiple>
+  <label class="meta" for="csvFile">csv</label>
+  <input id="csvFile" type="file" accept=".csv,text/csv">
   <label class="meta" for="csvTimestamp">time</label>
   <select id="csvTimestamp"></select>
   <label class="meta" for="csvMessage">message</label>
@@ -533,28 +317,6 @@
 </div>
 
 <div class="chips" id="chips"></div>
-
-<section class="slotviz" id="slotViz" aria-label="slot process timeline">
-  <div class="slotviz-head">
-    <div>
-      <h2>slot process bars</h2>
-      <p id="slotVizSummary">waiting for rows</p>
-    </div>
-    <div class="slotviz-legend" id="slotVizLegend"></div>
-    <div class="slotviz-controls" aria-label="chart controls">
-      <button class="chartMode active" data-scale="slot" id="chartFitSlot">fit 12s</button>
-      <button class="chartMode" data-scale="data" id="chartFitData">fit data</button>
-      <button id="chartCompact">compact</button>
-    </div>
-  </div>
-  <div class="slotviz-body">
-    <div class="slotviz-axis" id="slotVizAxis"></div>
-    <div class="slotviz-scroll" id="slotVizScroll">
-      <div class="slotviz-plot" id="slotVizPlot"></div>
-    </div>
-  </div>
-  <div class="slotviz-tooltip" id="slotVizTooltip" hidden></div>
-</section>
 
 <details class="legend">
   <summary>▸ what does each column mean? (plain-English legend)</summary>
@@ -708,16 +470,14 @@
 </footer>
 
 <script type="module">
-import { parseCsv, detectDatadogMapping, mergeDiagnosticsRows, parseDatadogCsvFiles } from './datadog_csv.mjs';
-import { SLOT_WINDOW_MS, STAGE_META, chartScaleMax, rowKey, stageSegments } from './slot_chart.mjs';
+import { parseCsv, detectDatadogMapping, mergeDiagnosticsRows, parseDatadogCsv } from './datadog_csv.mjs';
 
 const POLL_MS = 12000;           // one slot
 // inFlight: never let a second request start while one is outstanding. A slow
 // query used to mean the 12s timer fired anyway, stacking requests until both
 // the browser and ClickHouse fell over.
 let paused = false, lastSlots = new Set(), timerEnd = 0, inFlight = false;
-let activeTab = 'live', liveRows = [], csvRows = [], csvFiles = [], csvHeaders = [];
-let chartScaleMode = 'slot', chartCompact = false, selectedSlotKey = null, hoveredSlotKey = null;
+let activeTab = 'live', liveRows = [], csvRows = [], csvText = '', csvHeaders = [];
 
 const FIELD_OPTIONS = [
   ['fault_attribution', 'fault'],
@@ -846,8 +606,6 @@ function initFieldFilter() {
 
 // seconds in, prints "347ms" under 1s, "2.15s" from 1s up
 const fmtT = n => Math.abs(n) < 1 ? Math.round(n * 1000) + 'ms' : n.toFixed(2) + 's';
-const fmtMs = ms => fmtT(Number(ms) / 1000);
-const pct = (value, max) => Math.max(0, Math.min(100, (Number(value) / max) * 100));
 
 const boolCell = (v, invert, edge) => {
   const e = edge ? ' groupedge' : '';
@@ -893,171 +651,7 @@ const txtCell = (v, edge, max) => {
 // deferred-until-sentry placeholder cell
 const naCell = edge => `<td class="dim${edge ? ' groupedge' : ''}" title="needs a p2p sentry — deferred to a later phase">n/a</td>`;
 
-function renderSlotVizLegend() {
-  const stages = ['propagation', 'blob_wait', 'verify', 'import', 'vc_publish', 'missed'];
-  $('slotVizLegend').innerHTML = stages
-    .map(id => `<span class="slotviz-key"><span class="slotviz-swatch ${STAGE_META[id].colorClass}"></span>${esc(STAGE_META[id].label)}</span>`)
-    .join('');
-}
-
-function renderSlotVizAxis(maxMs) {
-  const ticks = [0, .25, .5, .75, 1];
-  $('slotVizAxis').innerHTML = ticks
-    .map(t => `<span class="slotviz-tick" style="bottom:${t * 100}%">${fmtMs(maxMs * t)}</span>`)
-    .join('');
-}
-
-function slotTooltipHtml(item, seg) {
-  const r = item.row;
-  const identity = r.validator_name || r.validator_index || r.validator_pubkey || 'unknown validator';
-  const missing = item.missing.length ? `<div class="muted">missing: ${esc(item.missing.join(', '))}</div>` : '';
-  const overflow = item.overflow ? `<div class="muted">overflow: ${esc(fmtMs(item.totalMs))} total exceeds 12s slot</div>` : '';
-  return `<b>${esc(seg.label)}</b>
-    <div>slot ${esc(r.slot)} · ${esc(identity)}</div>
-    <div>duration ${esc(fmtMs(seg.ms))}</div>
-    <div class="muted">source ${esc(seg.source)}</div>
-    <div class="muted">total known ${esc(fmtMs(item.totalMs))} · fault ${esc(r.fault_attribution || 'unknown')}</div>
-    ${missing}${overflow}`;
-}
-
-function moveSlotTooltip(event) {
-  const tip = $('slotVizTooltip');
-  const margin = 14;
-  const x = Math.min(window.innerWidth - tip.offsetWidth - margin, event.clientX + margin);
-  const y = Math.min(window.innerHeight - tip.offsetHeight - margin, event.clientY + margin);
-  tip.style.left = Math.max(margin, x) + 'px';
-  tip.style.top = Math.max(margin, y) + 'px';
-}
-
-function showSlotTooltip(event, item, seg) {
-  const tip = $('slotVizTooltip');
-  tip.innerHTML = slotTooltipHtml(item, seg);
-  tip.hidden = false;
-  moveSlotTooltip(event);
-}
-
-function hideSlotTooltip() {
-  $('slotVizTooltip').hidden = true;
-}
-
-function currentRows() {
-  return activeTab === 'live' ? liveRows : csvRows;
-}
-
-function syncSlotSelection() {
-  document.querySelectorAll('[data-slot-key]').forEach(el => {
-    const key = el.dataset.slotKey;
-    el.classList.toggle('selected', key === selectedSlotKey);
-    el.classList.toggle('hovered', key === hoveredSlotKey);
-  });
-  document.querySelectorAll('tbody tr[data-row-key]').forEach(tr => {
-    const key = tr.dataset.rowKey;
-    tr.classList.toggle('slot-selected', key === selectedSlotKey);
-    tr.classList.toggle('slot-hovered', key === hoveredSlotKey);
-  });
-}
-
-function selectSlotKey(key, scroll) {
-  selectedSlotKey = key;
-  syncSlotSelection();
-  if (scroll && key) {
-    const row = document.querySelector(`tbody tr[data-row-key="${CSS.escape(key)}"]`);
-    if (row) row.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
-  }
-}
-
-function bindSlotChartInteractions(itemsByKey) {
-  document.querySelectorAll('.slotbar').forEach(bar => {
-    const key = bar.dataset.slotKey;
-    bar.onmouseenter = () => { hoveredSlotKey = key; syncSlotSelection(); };
-    bar.onmouseleave = () => { hoveredSlotKey = null; syncSlotSelection(); };
-  });
-  document.querySelectorAll('.slotbar-stack').forEach(stack => {
-    const key = stack.closest('.slotbar').dataset.slotKey;
-    stack.onclick = () => selectSlotKey(selectedSlotKey === key ? null : key, true);
-    stack.onkeydown = e => {
-      if (e.key !== 'Enter' && e.key !== ' ') return;
-      e.preventDefault();
-      selectSlotKey(selectedSlotKey === key ? null : key, true);
-    };
-  });
-  document.querySelectorAll('.slotbar-seg').forEach(segEl => {
-    const key = segEl.closest('.slotbar').dataset.slotKey;
-    const item = itemsByKey.get(key);
-    const seg = item?.segments[Number(segEl.dataset.segmentIndex)];
-    if (!item || !seg) return;
-    segEl.onmouseenter = event => showSlotTooltip(event, item, seg);
-    segEl.onmousemove = moveSlotTooltip;
-    segEl.onmouseleave = hideSlotTooltip;
-  });
-}
-
-function renderSlotChart(rows) {
-  renderSlotVizLegend();
-  const plot = $('slotVizPlot');
-  const keys = new Set(rows.map(rowKey));
-  if (selectedSlotKey && !keys.has(selectedSlotKey)) selectedSlotKey = null;
-  if (!rows.length) {
-    $('slotVizSummary').textContent = 'no rows in current table';
-    $('slotVizAxis').innerHTML = '';
-    plot.className = 'slotviz-plot';
-    plot.innerHTML = '<div class="slotviz-empty">NO SLOT ROWS</div>';
-    return;
-  }
-
-  const maxMs = chartScaleMax(rows, chartScaleMode);
-  const items = rows.map(stageSegments);
-  const itemsByKey = new Map(items.map(item => [item.key, item]));
-  const overflowCount = items.filter(item => item.overflow).length;
-  const partialCount = items.filter(item => item.hasPartialData).length;
-  $('slotVizSummary').textContent =
-    `${rows.length} visible slot rows · scale ${chartScaleMode === 'data' ? 'fit data' : '12s slot'}`
-    + (overflowCount ? ` · ${overflowCount} overflow` : '')
-    + (partialCount ? ` · ${partialCount} partial` : '');
-  renderSlotVizAxis(maxMs);
-  plot.className = 'slotviz-plot' + (chartCompact ? ' compact' : '');
-  plot.innerHTML = items.map(item => {
-    const r = item.row;
-    const fault = r.fault_attribution || 'unknown';
-    const identity = r.validator_name || r.validator_index || r.validator_pubkey || 'validator';
-    const slot = r.slot ?? 'slot';
-    const segments = item.segments.length
-      ? item.segments.map((seg, i) => {
-        const height = Math.max(2, pct(seg.ms, maxMs));
-        return `<div class="slotbar-seg ${seg.colorClass}" data-segment-index="${i}" style="height:${height}%"></div>`;
-      }).join('')
-      : '<div class="slotbar-seg stage-missed" data-segment-index="0" style="height:100%"></div>';
-    const classes = [
-      'slotbar',
-      item.key === selectedSlotKey ? 'selected' : '',
-      item.key === hoveredSlotKey ? 'hovered' : '',
-    ].filter(Boolean).join(' ');
-    return `<div class="${classes}" data-slot-key="${esc(item.key)}">
-      <div class="slotbar-stack" role="button" tabindex="0" aria-label="select slot ${esc(slot)}">
-        ${segments}
-        ${item.overflow ? '<span class="slotbar-overflow">!</span>' : ''}
-      </div>
-      <div class="slotbar-label"><b>${esc(slot)}</b><span title="${esc(identity)}">${esc(fault)}</span></div>
-    </div>`;
-  }).join('');
-  bindSlotChartInteractions(itemsByKey);
-  syncSlotSelection();
-}
-
-function updateChartControls() {
-  document.querySelectorAll('.chartMode').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.scale === chartScaleMode);
-  });
-  $('chartCompact').classList.toggle('active', chartCompact);
-}
-
-function rerenderChart() {
-  updateChartControls();
-  renderSlotChart(currentRows());
-}
-
 function renderRows(rows) {
-  renderSlotChart(rows);
   const tb = $('rows');
   const frag = [];
   const validators = new Set();
@@ -1065,20 +659,14 @@ function renderRows(rows) {
   for (const r of rows) {
     validators.add(r.validator_index);
     faults[r.fault_attribution] = (faults[r.fault_attribution] || 0) + 1;
-    const key = rowKey(r);
-    const fresh = !lastSlots.has(key) && lastSlots.size > 0;
-    const rowClasses = [
-      fresh ? 'fresh' : '',
-      key === selectedSlotKey ? 'slot-selected' : '',
-      key === hoveredSlotKey ? 'slot-hovered' : '',
-    ].filter(Boolean).join(' ');
+    const fresh = !lastSlots.has(r.slot + ':' + r.validator_index) && lastSlots.size > 0;
     const dist = r.inclusion_distance === null ? null : Number(r.inclusion_distance);
     const headLag = r.head_lag_slots === null || r.head_lag_slots === undefined ? null : Number(r.head_lag_slots);
     const aggBits = (r.agg_bits_set === null || r.agg_bits_set === undefined)
       ? null : r.agg_bits_set + (r.committee_size ? '/' + r.committee_size : '');
     const blobsEl = (r.blobs_from_el === null || r.blobs_from_el === undefined)
       ? null : r.blobs_from_el + '/' + (r.blobs_expected ?? '?');
-    frag.push(`<tr data-row-key="${esc(key)}"${rowClasses ? ` class="${rowClasses}"` : ''}>` +
+    frag.push(`<tr${fresh ? ' class="fresh"' : ''}>` +
       // ===== INFORMATION =====
       // CHAIN
       numCell(r.epoch) + numCell(r.slot) +
@@ -1145,7 +733,7 @@ function renderRows(rows) {
   }
   tb.innerHTML = frag.join('');
   $('empty').hidden = rows.length > 0;
-  lastSlots = new Set(rows.map(rowKey));
+  lastSlots = new Set(rows.map(r => r.slot + ':' + r.validator_index));
   $('validators').innerHTML = 'validator <b>' + [...validators].join(', ') + '</b>';
   $('count').textContent = rows.length + ' rows';
 
@@ -1242,8 +830,7 @@ function compactCounts(counts, limit = 5) {
 }
 
 function csvDebugStats(result, diagnosticsRows, tableRows) {
-  return `files <b>${result.stats.fileCount ?? 1}</b>` +
-    ` · rows <b>${result.stats.totalRows}</b>` +
+  return `rows <b>${result.stats.totalRows}</b>` +
     ` · events <b>${result.stats.parsedEvents}</b>` +
     ` · ignored <b>${result.stats.ignoredRows}</b>` +
     ` · time <b>${result.stats.minTimestamp ? result.stats.minTimestamp.slice(11, 19) : '–'}-${result.stats.maxTimestamp ? result.stats.maxTimestamp.slice(11, 19) : '–'}</b>` +
@@ -1268,8 +855,8 @@ async function fetchCsvDiagnostics(stats) {
 }
 
 async function renderCsvWithMapping() {
-  if (!csvFiles.length) return;
-  const result = parseDatadogCsvFiles(csvFiles, {
+  if (!csvText) return;
+  const result = parseDatadogCsv(csvText, {
     timestamp: $('csvTimestamp').value,
     message: $('csvMessage').value,
     source: $('csvSource').value,
@@ -1331,23 +918,19 @@ $('clearFilters').onclick = () => {
   refresh();
 };
 $('csvFile').onchange = async () => {
-  const files = [...$('csvFile').files];
-  if (!files.length) return;
-  csvFiles = await Promise.all(files.map(async file => ({
-    name: file.name,
-    text: await file.text(),
-  })));
-  const parsed = parseCsv(csvFiles[0].text);
+  const file = $('csvFile').files[0];
+  if (!file) return;
+  csvText = await file.text();
+  const parsed = parseCsv(csvText);
   csvHeaders = parsed.headers;
   const mapping = detectDatadogMapping(csvHeaders);
   populateCsvMapping(csvHeaders, mapping);
-  const totalRows = csvFiles.reduce((sum, file) => sum + parseCsv(file.text).rows.length, 0);
-  $('csvStats').innerHTML = `loaded <b>${csvFiles.length}</b> files · csv rows <b>${totalRows}</b>`;
+  $('csvStats').innerHTML = `loaded <b>${esc(file.name)}</b> · csv rows <b>${parsed.rows.length}</b>`;
   await renderCsvWithMapping();
 };
 $('csvApply').onclick = renderCsvWithMapping;
 $('csvClear').onclick = () => {
-  csvFiles = [];
+  csvText = '';
   csvHeaders = [];
   csvRows = [];
   $('csvFile').value = '';
@@ -1358,21 +941,8 @@ $('csvClear').onclick = () => {
   lastSlots = new Set();
   renderRows([]);
 };
-$('chartFitSlot').onclick = () => {
-  chartScaleMode = 'slot';
-  rerenderChart();
-};
-$('chartFitData').onclick = () => {
-  chartScaleMode = 'data';
-  rerenderChart();
-};
-$('chartCompact').onclick = () => {
-  chartCompact = !chartCompact;
-  rerenderChart();
-};
 
 initFieldFilter();
-updateChartControls();
 enhanceColumnHelp();
 refresh();
 </script>
