@@ -78,7 +78,14 @@ transforms:
         src_m = parse_regex(raw, r'block_source: (?P<v>\w+)') ?? {}
         out.event = "block_imported"
         out.detail = if is_string(src_m.v) { string!(src_m.v) } else { "" }
-      } else if contains(raw, "Delayed head block") {
+      } else if contains(raw, "Delayed head block") || contains(raw, "On-time head block") {
+        # This Lighthouse version emits the SAME ms breakdown on BOTH the
+        # "On-time head block" (DEBUG, every on-time block) and "Delayed head
+        # block" lines — consensus_time_ms / execution_time_ms / imported_time_ms
+        # / set_as_head_time_ms etc. Matching only "Delayed head block" left the
+        # BN-consensus / EL-verify / block-import / head-import cells blank for
+        # the common (on-time) case. event stays 'delayed_head' so the view's
+        # maxIf(...event='delayed_head') picks both up unchanged.
         prop_m = parse_regex(raw, r'proposer_index: (?P<v>\d+)') ?? {}
         out.event = "delayed_head"
         out.proposer_index = if is_string(prop_m.v) { to_int(prop_m.v) ?? null } else { null }
@@ -122,26 +129,12 @@ transforms:
         c_m = parse_regex(raw, r'count: (?P<v>\d+)') ?? {}
         out.event = "partials_published"
         out.count = if is_string(c_m.v) { to_int(c_m.v) ?? null } else { null }
-      } else if contains(raw, "Block processing") {
-        # DEBUG-only block-processing sub-step breakdown. Requires the node to
-        # run with `--logfile-debug-level debug`. The substring + field names
-        # below are a SCAFFOLD — after enabling debug, capture a real line from
-        # beacon.log and adjust the match string and each regex to the actual
-        # lighthouse field names. Any field that doesn't match stays NULL, and
-        # if the whole line never matches this branch simply never fires (safe).
-        out.event = "block_processing"
-        m = parse_regex(raw, r'(?:decode|initial)(?:_time)?_ms: "?(?P<v>[0-9.]+)"?') ?? {}
-        if is_string(m.v) { out.proc_decode_ms = to_float(m.v) ?? null }
-        m = parse_regex(raw, r'(?:state|state_root|state_route)(?:_time)?_ms: "?(?P<v>[0-9.]+)"?') ?? {}
-        if is_string(m.v) { out.proc_state_ms = to_float(m.v) ?? null }
-        m = parse_regex(raw, r'(?:fork_choice|forkchoice)(?:_time)?_ms: "?(?P<v>[0-9.]+)"?') ?? {}
-        if is_string(m.v) { out.proc_forkchoice_ms = to_float(m.v) ?? null }
-        m = parse_regex(raw, r'(?:db_read|database_read)(?:_time)?_ms: "?(?P<v>[0-9.]+)"?') ?? {}
-        if is_string(m.v) { out.proc_dbread_ms = to_float(m.v) ?? null }
-        m = parse_regex(raw, r'(?:db_write|database_write)(?:_time)?_ms: "?(?P<v>[0-9.]+)"?') ?? {}
-        if is_string(m.v) { out.proc_dbwrite_ms = to_float(m.v) ?? null }
-        m = parse_regex(raw, r'(?:post_exec|post_execution)(?:_time)?_ms: "?(?P<v>[0-9.]+)"?') ?? {}
-        if is_string(m.v) { out.proc_postexec_ms = to_float(m.v) ?? null }
+      # NOTE: the finer block-processing sub-steps (decode / state route / fork
+      # choice / DB read / DB write / post exec) are NOT emitted by this
+      # Lighthouse version — it only logs the coarse consensus_time_ms /
+      # execution_time_ms / imported_time_ms / set_as_head_time_ms breakdown on
+      # the On-time/Delayed head block lines above. Those proc_* columns stay
+      # NULL unless a build that logs per-substep timings is deployed.
       } else {
         abort
       }
