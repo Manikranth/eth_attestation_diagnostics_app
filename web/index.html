@@ -211,8 +211,9 @@
       <h4 class="info">INFORMATION — what happened</h4>
       <dl>
         <dt>on chain</dt><dd>did a block actually land at your duty slot</dd>
-        <dt>head / tgt / src</dt><dd>were your head, target and source votes correct. <b>–</b> means unknown — the node was still syncing, so we don't guess (this is the fix for the old false ✓).</dd>
+        <dt>exec block# / current head#</dt><dd>the duty-slot block's execution number, and the execution block the node currently considers head (how caught-up it is).</dd>
         <dt>head lag</dt><dd>how many slots behind your duty slot the block you voted for was. 0 is ideal.</dd>
+        <dt>head / tgt / src</dt><dd>were your head, target and source votes correct. <b>–</b> means unknown — the node was still syncing, so we don't guess (this is the fix for the old false ✓).</dd>
         <dt>incl slot / dist</dt><dd>which slot included your vote, and how far after your duty slot that was (1 = ideal).</dd>
         <dt>missed</dt><dd>your attestation never made it on chain.</dd>
         <dt>head@tick / behind / sync</dt><dd>your node's health at the slot: its head slot, how far behind, and sync state.</dd>
@@ -220,27 +221,27 @@
     </div>
     <div class="lg">
       <h4>ATTESTATION — the pipeline, in the order it happened</h4>
-      <p class="note">Each column is tagged <b>BN</b> (beacon node), <b>EL</b> (execution layer) or <b>VC</b> (validator client). Columns marked as an <b>offset</b> are "how many ms after slot start" — they overlap and do <b>not</b> add up. Only the <b>STAGES (Δ)</b> columns are sequential and sum.</p>
+      <p class="note">Every timing column shows <b>two numbers</b>: <b>offset (duration)</b> — how far into the 12s slot window the step happened, then how long that step took. A <b>–</b> means that half isn't available yet. Tagged <b>BN</b> (beacon node), <b>EL</b> (execution layer) or <b>VC</b> (validator client). Several block-processing columns need the node running with <b>--logfile-debug-level debug</b> and stay <b>–</b> until then.</p>
       <dl>
-        <dt>seen</dt><dd>block first seen + verified on gossip (offset).</dd>
-        <dt>late by</dt><dd>how late Lighthouse judged the block (duration).</dd>
+        <dt>Block available / Block arrival</dt><dd>when the block was fully available for attesting, and when it first arrived + was verified on gossip (with how late it was).</dd>
+        <dt>decode · state route · fork choice · DB read · DB write · post exec</dt><dd>block-processing sub-steps. <b>DEBUG logs only</b> — dashed until debug logging is enabled on the node.</dd>
         <dt>blob src</dt><dd>where the blobs came from: <b>gossip</b>, <b>el</b> (getBlobs from execution), <b>gossip+el</b>, or <b>none</b>.</dd>
-        <dt>getBlobs req / blobs EL / cols EL</dt><dd>getBlobs request offset, blobs served/expected by the EL, and columns already held via the EL.</dd>
-        <dt>data ready</dt><dd>all blob/column data available (offset).</dd>
-        <dt>consensus / EL verify</dt><dd>how long consensus and execution-layer verification each took (durations — only logged on late blocks).</dd>
-        <dt>imported / attestable</dt><dd>block imported into fork choice, and all data attestable — the moment the beacon node was done and ready for the VC (offsets).</dd>
-        <dt>st:propag / st:blobs / st:import</dt><dd>the sequential stage gaps — these DO sum to the total.</dd>
-        <dt>att start / sign+pub / broadcast</dt><dd>VC started producing, how long produce+sign+publish took, and when the vote hit the wire (offset). <b>broadcast</b> is the single end-to-end number.</dd>
+        <dt>blob arrival / fetch·exp / cols / blob verify</dt><dd>first blob seen (offset), blobs served/expected by the EL, columns held via the EL, and when all data was verified + available.</dd>
+        <dt>BN consensus / EL verify</dt><dd>how long consensus and execution-layer verification took. Full per-block durations need DEBUG logs (today only late blocks carry them).</dd>
+        <dt>block import / head import</dt><dd>block written into fork choice, then set as head (offset into slot, with the write / set-as-head durations).</dd>
+        <dt>VC att start / sign + pub</dt><dd>when the VC began producing, and how long produce+sign+publish took.</dd>
+        <dt>bottleneck</dt><dd>the slowest step this slot.</dd>
       </dl>
     </div>
     <div class="lg">
       <h4 class="agg">AGGREGATION — did an aggregator carry your vote</h4>
       <dl>
-        <dt>in agg</dt><dd>your vote was included in an on-chain aggregate.</dd>
-        <dt>picked</dt><dd>an aggregator picked up your vote on gossip (live p2p watcher).</dd>
+        <dt>block on subnet</dt><dd><b>–</b> — when the block/attestation first arrived on the gossip subnet needs a p2p sentry (deferred).</dd>
+        <dt>in agg / picked</dt><dd>your vote was included in an on-chain aggregate; and whether an aggregator picked it up on gossip (live p2p watcher).</dd>
+        <dt>cmts / pos</dt><dd>your committee index and position within that committee for this duty.</dd>
         <dt>agg bits</dt><dd>how many validators were in the aggregate that carried your vote / committee size.</dd>
         <dt>agg pub</dt><dd>when our node published its aggregate (only if this validator was an aggregator).</dd>
-        <dt>peers</dt><dd>node-wide peer count at the slot (a proxy — not a true per-aggregation count).</dd>
+        <dt>peer</dt><dd>node-wide peer count at the slot (a proxy — not a true per-aggregation count).</dd>
         <dt>Δ blk</dt><dd><b>n/a</b> — the delta between the block the aggregator saw and the block you attested needs a p2p sentry (deferred to a later phase).</dd>
       </dl>
     </div>
@@ -265,37 +266,37 @@
   <table>
     <thead>
       <tr class="sections">
-        <th colspan="22" class="info">INFORMATION</th>
-        <th colspan="21" title="every sub-step of the attestation pipeline, in the ACTUAL order it happened — each column tagged BN=beacon node, EL=execution layer, VC=validator client">ATTESTATION · sequential pipeline</th>
-        <th colspan="6" class="agg" title="aggregation of your vote: did an aggregator pick it up, how big, when, peers at the time">AGGREGATION</th>
+        <th colspan="21" class="info">INFORMATION</th>
+        <th colspan="22" title="every sub-step of the attestation pipeline, in the ACTUAL order it happened. Each timing cell shows TWO numbers: offset into the 12s slot window, then (how long that step took). Tagged BN=beacon node, EL=execution layer, VC=validator client">ATTESTATION · sequential pipeline</th>
+        <th colspan="9" class="agg" title="aggregation of your vote: did an aggregator pick it up, committee, how big, when, peers">AGGREGATION</th>
         <th colspan="3" class="prop" title="how your vote propagated on gossip: time to hit the wire, which subnet">PROPAGATION</th>
         <th colspan="1" class="verdict">VERDICT</th>
       </tr>
       <tr class="groups">
         <th colspan="5">CHAIN</th>
-        <th colspan="5" class="groupedge">BLOCK @ DUTY SLOT</th>
-        <th colspan="2" class="groupedge">COMMITTEE</th>
-        <th colspan="4" class="groupedge">VOTES</th>
+        <th colspan="7" class="groupedge">BLOCK @ DUTY SLOT</th>
+        <th colspan="3" class="groupedge">VOTES</th>
         <th colspan="3" class="groupedge">INCLUSION</th>
         <th colspan="3" class="groupedge">NODE</th>
         <th colspan="2" class="groupedge" title="block received on our beacon node">RECEIVE · BN</th>
+        <th colspan="6" class="groupedge" title="block-processing sub-steps — DEBUG logs only (dashed until node debug logging is on)">BLOCK PROCESSING · BN</th>
         <th colspan="5" class="groupedge" title="blob / data-column arrival — where from and when">BLOBS · BN/EL</th>
-        <th colspan="5" class="groupedge" title="verify + import durations and offsets">VERIFY + IMPORT · BN/EL</th>
-        <th colspan="4" class="groupedge" title="sequential gaps between the offsets — these DO sum">STAGES · Δ</th>
+        <th colspan="4" class="groupedge" title="verify + import: offset (duration)">VERIFY + IMPORT · BN/EL</th>
         <th colspan="5" class="groupedge" title="validator client: produce, sign, publish">VALIDATOR CLIENT · VC</th>
-        <th colspan="6" class="groupedge">AGGREGATE PICKUP</th>
+        <th colspan="9" class="groupedge">AGGREGATE PICKUP</th>
         <th colspan="3" class="groupedge">GOSSIP</th>
         <th class="groupedge">fault</th>
       </tr>
       <tr class="cols">
         <!-- INFORMATION -->
-        <th>epoch</th><th>slot</th><th>slot start utc</th><th>validator</th><th>name</th>
-        <th class="groupedge">on chain</th><th>proposer</th><th>exec block#</th><th>blobs</th><th>graffiti</th>
-        <th class="groupedge">cmte</th><th>pos</th>
+        <th>epoch</th><th>slot</th><th>slot window</th><th>validator</th><th>name</th>
+        <th class="groupedge">on chain</th><th>proposer</th><th>exec block#</th>
+        <th title="EL block number the node considered head at duty time — how caught-up the node was">current head#</th>
+        <th title="how many slots behind the duty slot your attested head was (0 = ideal)">head lag</th>
+        <th>blobs</th><th>graffiti</th>
         <th class="groupedge" title="did you vote for the correct head block? – = unknown while node syncing">head</th>
         <th title="correct target checkpoint?">tgt</th>
         <th title="correct source checkpoint?">src</th>
-        <th title="how many slots behind the duty slot your attested head was (0 = ideal)">head lag</th>
         <th class="groupedge" title="slot your attestation was included in">incl slot</th>
         <th title="inclusion distance: incl slot − duty slot (1 = ideal)">dist</th>
         <th title="attestation never made it on chain">missed</th>
@@ -303,37 +304,41 @@
         <th title="how many slots your node was behind at the tick">behind</th>
         <th title="node sync state at the tick">sync</th>
         <!-- ATTESTATION · RECEIVE -->
-        <th class="groupedge lyr" data-lyr="BN" title="block first seen + verified on gossip — offset from slot start">seen</th>
-        <th class="lyr" data-lyr="BN" title="lighthouse flagged the block late by this much (duration)">late by</th>
+        <th class="groupedge lyr" data-lyr="BN" title="block fully available for attesting. offset into slot (time from first-seen to available)">Block available</th>
+        <th class="lyr" data-lyr="BN" title="block first seen + verified on gossip. offset into slot (how late lighthouse judged it)">Block arrival</th>
+        <!-- ATTESTATION · BLOCK PROCESSING (debug) -->
+        <th class="groupedge lyr" data-lyr="BN" title="decode / initial checks. offset (duration) — DEBUG logs only">decode</th>
+        <th class="lyr" data-lyr="BN" title="state load / state-root route. offset (duration) — DEBUG logs only">state route</th>
+        <th class="lyr" data-lyr="BN" title="fork choice update. offset (duration) — DEBUG logs only">fork choice</th>
+        <th class="lyr" data-lyr="BN" title="database read. offset (duration) — DEBUG logs only">DB read</th>
+        <th class="lyr" data-lyr="BN" title="database write. offset (duration) — DEBUG logs only">DB write</th>
+        <th class="lyr" data-lyr="BN" title="post-execution work. offset (duration) — DEBUG logs only">post exec</th>
         <!-- ATTESTATION · BLOBS -->
         <th class="groupedge lyr" data-lyr="BN/EL" title="where the blobs/data columns came from: gossip, el (getBlobs), gossip+el, or none">blob src</th>
-        <th class="lyr" data-lyr="BN→EL" title="getBlobs request sent to EL — offset from slot start">getBlobs req</th>
-        <th class="lyr" data-lyr="EL" title="blobs served by EL / expected">blobs EL</th>
-        <th class="lyr" data-lyr="EL" title="data columns already had via EL when gossip brought them">cols EL</th>
-        <th class="lyr" data-lyr="BN" title="all blob/column data available — offset from slot start">data ready</th>
+        <th class="lyr" data-lyr="BN" title="first blob/data-column seen on gossip — offset into slot">blob arrival</th>
+        <th class="lyr" data-lyr="EL" title="blobs served by EL / expected">blob fetch/exp</th>
+        <th class="lyr" data-lyr="EL" title="data columns already had via EL when gossip brought them">cols</th>
+        <th class="lyr" data-lyr="BN" title="all blob/column data verified + available — offset into slot">blob verify</th>
         <!-- ATTESTATION · VERIFY + IMPORT -->
-        <th class="groupedge lyr" data-lyr="BN" title="consensus (BLS / state-transition) verify duration">consensus</th>
-        <th class="lyr" data-lyr="EL" title="execution layer verify duration">EL verify</th>
-        <th class="lyr" data-lyr="BN" title="block written into fork choice — offset from slot start">imported</th>
-        <th class="lyr" data-lyr="BN" title="where the imported block came from — gossip live vs range_sync backfill">import src</th>
-        <th class="lyr" data-lyr="BN" title="all data attestable — offset from slot start. This is when the beacon node was done and ready for the VC.">attestable</th>
-        <!-- ATTESTATION · STAGES -->
-        <th class="groupedge lyr" data-lyr="Δ" title="stage: proposal → first seen on our node">st:propag</th>
-        <th class="lyr" data-lyr="Δ" title="stage: seen → all blob/col data available">st:blobs</th>
-        <th class="lyr" data-lyr="Δ" title="stage: data available → imported">st:import</th>
-        <th class="lyr" data-lyr="Δ" title="slowest stage this slot">bottleneck</th>
+        <th class="groupedge lyr" data-lyr="BN" title="consensus (BLS / state-transition) verify. offset (duration) — full breakdown needs DEBUG logs">BN consensus</th>
+        <th class="lyr" data-lyr="EL" title="execution-layer verify. offset (duration) — full breakdown needs DEBUG logs">EL verify</th>
+        <th class="lyr" data-lyr="BN" title="block written into fork choice. offset into slot (DB-write duration)">block import</th>
+        <th class="lyr" data-lyr="BN" title="block set as head. offset into slot (set-as-head duration)">head import</th>
         <!-- ATTESTATION · VC -->
-        <th class="groupedge lyr" data-lyr="VC" title="VC began producing attestation — offset from slot start">att start</th>
-        <th class="lyr" data-lyr="VC" title="produce + sign + publish duration inside the VC">sign+pub</th>
-        <th class="lyr" data-lyr="VC" title="attestation published to gossip — offset from slot start (VC → beacon node → wire). The single end-to-end number; NULL until the VC actually attests.">broadcast</th>
-        <th class="lyr" data-lyr="VC" title="attestation-production failures this slot">fails</th>
-        <th class="lyr" data-lyr="VC" title="failure reason, if any">fail reason</th>
+        <th class="groupedge lyr" data-lyr="VC" title="VC began producing the attestation — offset into slot">VC att start</th>
+        <th class="lyr" data-lyr="VC" title="attestation start offset (produce + sign + publish duration inside the VC)">sign + pub</th>
+        <th class="lyr" data-lyr="VC" title="attestation-production failures this slot">VC fails</th>
+        <th class="lyr" data-lyr="VC" title="failure reason, if any">VC fail reasons</th>
+        <th class="lyr" data-lyr="Δ" title="slowest step this slot">bottleneck</th>
         <!-- AGGREGATION -->
-        <th class="groupedge" title="was your vote included in an aggregate (on chain)?">in agg</th>
+        <th class="groupedge" title="when the block/attestation first arrived on the gossip subnet — needs a p2p sentry (deferred)">block on subnet</th>
+        <th title="was your vote included in an aggregate (on chain)?">in agg</th>
         <th title="did an aggregator pick up your vote on gossip? (p2p watcher)">picked</th>
+        <th title="committee index for this duty">cmts</th>
+        <th title="your position within the committee">pos</th>
         <th title="participants in the aggregate that carried your vote / committee size">agg bits</th>
-        <th title="when our node published the aggregate — offset from slot start (only if this validator was an aggregator)">agg pub</th>
-        <th title="node-wide peer count at the slot tick (proxy — not per-aggregation)">peers</th>
+        <th title="when our node published the aggregate — offset into slot (only if this validator was an aggregator)">agg pub</th>
+        <th title="node-wide peer count at the slot tick (proxy — not per-aggregation)">peer</th>
         <th title="delta between the block the aggregator saw and the block you attested — needs a p2p sentry (deferred)">Δ blk</th>
         <!-- PROPAGATION -->
         <th class="groupedge" title="time from slot start until your vote first hit the wire (p2p watcher)">propag</th>
@@ -387,6 +392,19 @@ const msCell = (v, edge, warn = 4000, bad = 8000) => {
   if (v === null || v === undefined) return `<td class="dim${edge ? ' groupedge' : ''}">–</td>`;
   return tCell(Number(v) / 1000, edge, warn / 1000, bad / 1000);
 };
+// TWO-number cell: "offset into slot (duration of the step)". Both in ms.
+// Either half may be missing → shown as a dim "–". If BOTH missing the whole
+// cell is a single dim "–". Offset value drives the ok/warn/bad color.
+const pairCell = (offMs, durMs, edge, warn = 4000, bad = 8000) => {
+  const e = edge ? ' groupedge' : '';
+  const has = v => v !== null && v !== undefined;
+  if (!has(offMs) && !has(durMs)) return `<td class="dim${e}">–</td>`;
+  const offStr = has(offMs) ? fmtT(Number(offMs) / 1000) : '–';
+  const durStr = has(durMs) ? fmtT(Number(durMs) / 1000) : '–';
+  const c = has(offMs) ? Number(offMs) : Number(durMs);
+  const cls = c <= warn ? 'ok' : c <= bad ? 'warn' : 'bad';
+  return `<td class="${cls}${e}" title="offset ${offStr} · duration ${durStr}">${offStr} <span class="dim">(${durStr})</span></td>`;
+};
 const numCell = (v, edge, cls) => {
   if (v === null || v === undefined) return `<td class="dim${edge ? ' groupedge' : ''}">–</td>`;
   return `<td class="${cls || ''}${edge ? ' groupedge' : ''}">${v}</td>`;
@@ -423,14 +441,13 @@ function renderRows(rows) {
       txtCell(r.validator_name || r.validator_pubkey, false, 18) +
       // BLOCK @ DUTY SLOT
       boolCell(r.block_on_chain, false, true) +
-      numCell(r.proposer_index) + numCell(r.exec_block_number) + numCell(r.blob_count) +
-      txtCell(r.graffiti) +
-      // COMMITTEE
-      numCell(r.committee_index, true) + numCell(r.committee_position) +
+      numCell(r.proposer_index) + numCell(r.exec_block_number) +
+      numCell(r.current_head_exec_block) +
+      numCell(headLag, false, headLag === null ? '' : headLag <= 1 ? 'ok' : 'warn') +
+      numCell(r.blob_count) + txtCell(r.graffiti) +
       // VOTES
       boolCell(r.head_correct, false, true) +
       boolCell(r.target_correct) + boolCell(r.source_correct) +
-      numCell(headLag, false, headLag === null ? '' : headLag <= 1 ? 'ok' : 'warn') +
       // INCLUSION
       numCell(r.inclusion_slot, true) +
       numCell(dist, false, dist === null ? '' : dist === 1 ? 'ok' : 'warn') +
@@ -440,42 +457,45 @@ function renderRows(rows) {
       numCell(r.node_behind_slots, false,
         r.node_behind_slots === null ? '' : Number(r.node_behind_slots) <= 1 ? 'ok' : 'bad') +
       txtCell(r.sync_state, false, 10) +
-      // ===== ATTESTATION · sequential pipeline =====
+      // ===== ATTESTATION · sequential pipeline =====  offset (duration)
       // RECEIVE [BN]
-      msCell(r.block_seen_ms, true) +
-      msCell(r.gossip_late_by_ms, false, 10, 4000) +
+      pairCell(r.available_ms, r.avail_dur_ms, true) +
+      pairCell(r.block_seen_ms, r.gossip_late_by_ms) +
+      // BLOCK PROCESSING [BN] — DEBUG logs only (dashed until debug on)
+      pairCell(r.proc_start_ms, r.proc_decode_ms, true, 2000, 4000) +
+      pairCell(r.proc_start_ms, r.proc_state_ms, false, 2000, 4000) +
+      pairCell(r.proc_start_ms, r.proc_forkchoice_ms, false, 2000, 4000) +
+      pairCell(r.proc_start_ms, r.proc_dbread_ms, false, 2000, 4000) +
+      pairCell(r.proc_start_ms, r.proc_dbwrite_ms, false, 2000, 4000) +
+      pairCell(r.proc_start_ms, r.proc_postexec_ms, false, 2000, 4000) +
       // BLOBS / DATA [BN/EL]
       txtCell(r.blob_source, true, 10) +
-      msCell(r.el_getblobs_req_ms) +
+      pairCell(r.gossip_blob_arrival_ms, null) +
       numCell(blobsEl) +
       numCell(r.cols_via_el) +
-      msCell(r.blobs_ready_ms) +
+      pairCell(r.blobs_ready_ms, null) +
       // VERIFY + IMPORT [BN/EL]
-      msCell(r.consensus_verify_ms, true, 500, 2000) +
-      msCell(r.el_verify_ms, false, 500, 2000) +
-      msCell(r.imported_ms) +
-      txtCell(r.import_source, false, 10) +
-      msCell(r.attestable_ms) +
-      // STAGES (Δ, sequential — these DO sum)
-      msCell(r.stage_propagation_ms, true, 2000, 4000) +
-      msCell(r.stage_blob_wait_ms, false, 1000, 3000) +
-      msCell(r.stage_import_ms, false, 500, 2000) +
-      txtCell(r.bottleneck, false, 11) +
+      pairCell(r.proc_start_ms, r.consensus_verify_ms, true, 500, 2000) +
+      pairCell(r.proc_start_ms, r.el_verify_ms, false, 500, 2000) +
+      pairCell(r.imported_ms, r.import_write_ms) +
+      pairCell(r.head_ready_ms, r.set_as_head_ms) +
       // VALIDATOR CLIENT [VC]
-      msCell(r.att_start_ms, true, 4500, 6000) +
-      msCell(r.vc_publish_dur_ms, false, 1000, 3000) +
-      msCell(r.total_attestation_lifecycle_ms, false, 4500, 8000) +
+      pairCell(r.att_start_ms, null, true, 4500, 6000) +
+      pairCell(r.att_start_ms, r.vc_publish_dur_ms, false, 4500, 6000) +
       numCell(r.att_failures, false, Number(r.att_failures) > 0 ? 'bad' : 'dim') +
       txtCell(r.att_fail_reason, false, 26) +
+      txtCell(r.bottleneck, false, 11) +
       // ===== AGGREGATION =====
-      boolCell(r.included_in_aggregate, false, true) +
+      pairCell(undefined, undefined, true) +          // block on subnet — deferred sentry
+      boolCell(r.included_in_aggregate) +
       boolCell(r.aggregator_picked) +
+      numCell(r.committee_index) + numCell(r.committee_position) +
       numCell(aggBits) +
-      msCell(r.agg_published_ms) +
+      pairCell(r.agg_published_ms, null) +
       numCell(r.peers) +
       naCell() +
       // ===== PROPAGATION =====
-      msCell(r.propagation_delay_ms, true) +
+      pairCell(r.propagation_delay_ms, null, true) +
       numCell(r.subnet_id) +
       naCell() +
       // ===== VERDICT =====

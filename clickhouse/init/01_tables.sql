@@ -31,7 +31,8 @@ CREATE TABLE IF NOT EXISTS attmon.chain_attestations
     -- block facts for the duty slot (from beacon API)
     block_on_chain        Nullable(UInt8),      -- did a block land at the duty slot
     proposer_index        Nullable(UInt64),
-    exec_block_number     Nullable(UInt64),     -- execution-layer block number
+    exec_block_number     Nullable(UInt64),     -- execution-layer block number of the duty-slot block
+    current_head_exec_block Nullable(UInt64),   -- EL block# the node considered head at duty time
     exec_block_hash       String DEFAULT '',
     state_root            String DEFAULT '',
     graffiti              String DEFAULT '',
@@ -50,6 +51,8 @@ ALTER TABLE attmon.chain_attestations
     ADD COLUMN IF NOT EXISTS validator_pubkey String DEFAULT '';
 ALTER TABLE attmon.chain_attestations
     ADD COLUMN IF NOT EXISTS validator_name String DEFAULT '';
+ALTER TABLE attmon.chain_attestations
+    ADD COLUMN IF NOT EXISTS current_head_exec_block Nullable(UInt64);
 -- Existing volumes: convert the vote verdicts to Nullable in place so the
 -- indexer can write NULL "unknown-while-syncing" verdicts (see CREATE above).
 ALTER TABLE attmon.chain_attestations
@@ -88,6 +91,15 @@ CREATE TABLE IF NOT EXISTS attmon.node_events
     num_fetched         Nullable(UInt32),
     count               Nullable(UInt32),
     committee_index     Nullable(UInt32),
+    -- block-processing sub-step DURATIONS (ms), parsed from the beacon DEBUG
+    -- block-processing summary line. Only present when the node runs with
+    -- --logfile-debug-level debug; NULL otherwise. event = 'block_processing'.
+    proc_decode_ms      Nullable(Float64),   -- decode / initial checks
+    proc_state_ms       Nullable(Float64),   -- state load / state-root route
+    proc_forkchoice_ms  Nullable(Float64),   -- fork choice update
+    proc_dbread_ms      Nullable(Float64),   -- DB read
+    proc_dbwrite_ms     Nullable(Float64),   -- DB write
+    proc_postexec_ms    Nullable(Float64),   -- post-execution work
     detail              String DEFAULT '',
     inserted_at         DateTime DEFAULT now()
 )
@@ -98,6 +110,12 @@ ALTER TABLE attmon.node_events
     ADD COLUMN IF NOT EXISTS validator_pubkey String DEFAULT '';
 ALTER TABLE attmon.node_events
     ADD COLUMN IF NOT EXISTS validator_name String DEFAULT '';
+ALTER TABLE attmon.node_events ADD COLUMN IF NOT EXISTS proc_decode_ms     Nullable(Float64);
+ALTER TABLE attmon.node_events ADD COLUMN IF NOT EXISTS proc_state_ms      Nullable(Float64);
+ALTER TABLE attmon.node_events ADD COLUMN IF NOT EXISTS proc_forkchoice_ms Nullable(Float64);
+ALTER TABLE attmon.node_events ADD COLUMN IF NOT EXISTS proc_dbread_ms     Nullable(Float64);
+ALTER TABLE attmon.node_events ADD COLUMN IF NOT EXISTS proc_dbwrite_ms    Nullable(Float64);
+ALTER TABLE attmon.node_events ADD COLUMN IF NOT EXISTS proc_postexec_ms   Nullable(Float64);
 
 -- Legacy layer-2 table kept for compatibility (Delayed head block only)
 CREATE TABLE IF NOT EXISTS attmon.node_logs
@@ -189,6 +207,12 @@ WITH
             e.num_expected AS num_expected,
             e.num_fetched AS num_fetched,
             e.count AS count,
+            e.proc_decode_ms AS proc_decode_ms,
+            e.proc_state_ms AS proc_state_ms,
+            e.proc_forkchoice_ms AS proc_forkchoice_ms,
+            e.proc_dbread_ms AS proc_dbread_ms,
+            e.proc_dbwrite_ms AS proc_dbwrite_ms,
+            e.proc_postexec_ms AS proc_postexec_ms,
             e.detail AS detail
         FROM attmon.node_events AS e
         LEFT JOIN root_map AS r ON r.block_root = e.block_root
@@ -226,6 +250,16 @@ SELECT
     maxIf(imported_time_ms, event = 'delayed_head')              AS imported_time_ms,
     maxIf(set_as_head_time_ms, event = 'delayed_head')           AS set_as_head_time_ms,
     maxIf(total_delay_ms, event = 'delayed_head')                AS total_delay_ms,
+    -- block-processing sub-step breakdown (DEBUG-only). Offset = when the
+    -- processing summary was logged; durations are per-step (ms).
+    minIfOrNull(toUnixTimestamp64Milli(ts), event = 'block_processing') / 1000.0
+        - (genesis + slot * 12)                                  AS proc_start_s,
+    maxIf(proc_decode_ms, event = 'block_processing')            AS proc_decode_ms,
+    maxIf(proc_state_ms, event = 'block_processing')             AS proc_state_ms,
+    maxIf(proc_forkchoice_ms, event = 'block_processing')        AS proc_forkchoice_ms,
+    maxIf(proc_dbread_ms, event = 'block_processing')            AS proc_dbread_ms,
+    maxIf(proc_dbwrite_ms, event = 'block_processing')           AS proc_dbwrite_ms,
+    maxIf(proc_postexec_ms, event = 'block_processing')          AS proc_postexec_ms,
     -- validator client journey
     minIfOrNull(toUnixTimestamp64Milli(ts), event = 'att_start') / 1000.0
         - (genesis + slot * 12)                                  AS att_start_s,
@@ -285,6 +319,7 @@ SELECT
     c.block_on_chain        AS block_on_chain,
     c.proposer_index        AS proposer_index,
     c.exec_block_number     AS exec_block_number,
+    c.current_head_exec_block AS current_head_exec_block,
     c.graffiti              AS graffiti,
     c.blob_count            AS blob_count,
     c.head_lag_slots        AS head_lag_slots,
@@ -312,20 +347,27 @@ SELECT
     )                       AS blob_source,
     x_blobs_ready_ms        AS blobs_ready_ms,
     x_available_ms          AS available_ms,
+    -- "Block available" duration = how long from first-seen to fully available
+    round(x_available_ms - x_seen_ms) AS avail_dur_ms,
     round(coalesce(t.attestable_delay_ms, t.data_complete_s * 1000)) AS attestable_ms,
     x_imported_ms           AS imported_ms,
     round(t.total_delay_ms) AS head_ready_ms,
-    -- PROCESS DURATIONS: how long each verify/import step took (ms; only
-    -- logged on late blocks). Durations, not offsets.
+    -- BLOCK-PROCESSING sub-steps (DEBUG-only). proc_start_ms is the shared
+    -- offset; the six *_ms are per-step durations. NULL until the node runs
+    -- with --logfile-debug-level debug and Vector parses the summary line.
+    round(t.proc_start_s * 1000) AS proc_start_ms,
+    round(t.proc_decode_ms)      AS proc_decode_ms,
+    round(t.proc_state_ms)       AS proc_state_ms,
+    round(t.proc_forkchoice_ms)  AS proc_forkchoice_ms,
+    round(t.proc_dbread_ms)      AS proc_dbread_ms,
+    round(t.proc_dbwrite_ms)     AS proc_dbwrite_ms,
+    round(t.proc_postexec_ms)    AS proc_postexec_ms,
+    -- PROCESS DURATIONS: how long each verify/import step took (ms; consensus
+    -- + EL verify only on late blocks today, all blocks once debug is on).
     round(t.consensus_time_ms)   AS consensus_verify_ms,
     round(t.execution_time_ms)   AS el_verify_ms,
     round(t.imported_time_ms)    AS import_write_ms,
     round(t.set_as_head_time_ms) AS set_as_head_ms,
-    -- STAGES: gaps between consecutive timeline points (ms) — Sigma Prime
-    -- model: propagation → blob wait → import, then the VC's own work
-    x_seen_ms                                          AS stage_propagation_ms,
-    x_available_ms - x_seen_ms                         AS stage_blob_wait_ms,
-    x_imported_ms - greatest(x_available_ms, x_seen_ms) AS stage_import_ms,
     -- which stage ate the most time this slot (vc_publish stage = vc_publish_dur_ms)
     multiIf(
         x_seen_ms IS NULL AND t.att_published_s IS NULL, NULL,
