@@ -821,27 +821,6 @@ function populateCsvMapping(headers, mapping) {
   $('csvSource').innerHTML = optionList(headers, mapping.source, true);
 }
 
-function compactCounts(counts, limit = 5) {
-  return Object.entries(counts || {})
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, limit)
-    .map(([k, v]) => `${esc(k)}:${v}`)
-    .join(', ') || '–';
-}
-
-function csvDebugStats(result, diagnosticsRows, tableRows) {
-  return `rows <b>${result.stats.totalRows}</b>` +
-    ` · events <b>${result.stats.parsedEvents}</b>` +
-    ` · ignored <b>${result.stats.ignoredRows}</b>` +
-    ` · time <b>${result.stats.minTimestamp ? result.stats.minTimestamp.slice(11, 19) : '–'}-${result.stats.maxTimestamp ? result.stats.maxTimestamp.slice(11, 19) : '–'}</b>` +
-    ` · slots <b>${result.stats.minSlot ?? '–'}-${result.stats.maxSlot ?? '–'}</b>` +
-    ` · csv slot rows <b>${result.rows.length}</b>` +
-    ` · clickhouse slot rows <b>${diagnosticsRows}</b>` +
-    ` · table rows <b>${tableRows}</b>` +
-    ` · services <b>${compactCounts(result.stats.serviceCounts, 3)}</b>` +
-    ` · parsed <b>${compactCounts(result.stats.eventCounts, 5)}</b>`;
-}
-
 async function fetchCsvDiagnostics(stats) {
   if (stats.minSlot === null || stats.maxSlot === null) return [];
   const params = new URLSearchParams();
@@ -869,7 +848,8 @@ async function renderCsvWithMapping() {
     csvRows = mergeDiagnosticsRows(diagnosticsRows, result.rows);
     lastSlots = new Set();
     renderRows(csvRows);
-    $('csvStats').innerHTML = csvDebugStats(result, diagnosticsRows.length, csvRows.length);
+    $('csvStats').innerHTML =
+      `rows <b>${result.stats.totalRows}</b> · events <b>${result.stats.parsedEvents}</b> · ignored <b>${result.stats.ignoredRows}</b> · slots <b>${result.stats.minSlot ?? '–'}-${result.stats.maxSlot ?? '–'}</b> · clickhouse slot rows <b>${diagnosticsRows.length}</b> · table rows <b>${csvRows.length}</b>`;
     $('live').className = csvRows.length ? 'live stale' : 'live err';
     $('livetext').textContent = csvRows.length ? 'CSV+CH' : 'NO CSV ROWS';
     $('updated').textContent = csvRows.length ? 'csv enriched from ClickHouse diagnostics' : 'csv had no recognized rows and no diagnostics matches';
@@ -877,7 +857,8 @@ async function renderCsvWithMapping() {
     csvRows = result.rows;
     lastSlots = new Set();
     renderRows(csvRows);
-    $('csvStats').innerHTML = csvDebugStats(result, 'error', csvRows.length);
+    $('csvStats').innerHTML =
+      `rows <b>${result.stats.totalRows}</b> · events <b>${result.stats.parsedEvents}</b> · ignored <b>${result.stats.ignoredRows}</b> · clickhouse <b>error</b>`;
     $('live').className = csvRows.length ? 'live stale' : 'live err';
     $('livetext').textContent = csvRows.length ? 'CSV ONLY' : 'NO CSV ROWS';
     $('updated').textContent = 'ClickHouse enrichment failed: ' + e.message;

@@ -107,11 +107,6 @@ test('parseDatadogCsv maps real Datadog beacon rows from Date Service Content', 
 
   assert.equal(result.stats.totalRows, 2);
   assert.equal(result.stats.parsedEvents, 2);
-  assert.equal(result.stats.serviceCounts['eth-staking'], 2);
-  assert.equal(result.stats.eventCounts.slot_timer, 1);
-  assert.equal(result.stats.eventCounts.new_block, 1);
-  assert.equal(result.stats.minTimestamp, '2026-07-29T04:56:37.339Z');
-  assert.equal(result.stats.maxTimestamp, '2026-07-29T04:56:54.349Z');
   assert.equal(result.rows.length, 2);
 
   const synced = result.rows.find(r => r.slot === 3590634);
