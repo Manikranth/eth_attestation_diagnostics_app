@@ -91,15 +91,6 @@ CREATE TABLE IF NOT EXISTS attmon.node_events
     num_fetched         Nullable(UInt32),
     count               Nullable(UInt32),
     committee_index     Nullable(UInt32),
-    -- block-processing sub-step DURATIONS (ms), parsed from the beacon DEBUG
-    -- block-processing summary line. Only present when the node runs with
-    -- --logfile-debug-level debug; NULL otherwise. event = 'block_processing'.
-    proc_decode_ms      Nullable(Float64),   -- decode / initial checks
-    proc_state_ms       Nullable(Float64),   -- state load / state-root route
-    proc_forkchoice_ms  Nullable(Float64),   -- fork choice update
-    proc_dbread_ms      Nullable(Float64),   -- DB read
-    proc_dbwrite_ms     Nullable(Float64),   -- DB write
-    proc_postexec_ms    Nullable(Float64),   -- post-execution work
     detail              String DEFAULT '',
     inserted_at         DateTime DEFAULT now()
 )
@@ -110,12 +101,17 @@ ALTER TABLE attmon.node_events
     ADD COLUMN IF NOT EXISTS validator_pubkey String DEFAULT '';
 ALTER TABLE attmon.node_events
     ADD COLUMN IF NOT EXISTS validator_name String DEFAULT '';
-ALTER TABLE attmon.node_events ADD COLUMN IF NOT EXISTS proc_decode_ms     Nullable(Float64);
-ALTER TABLE attmon.node_events ADD COLUMN IF NOT EXISTS proc_state_ms      Nullable(Float64);
-ALTER TABLE attmon.node_events ADD COLUMN IF NOT EXISTS proc_forkchoice_ms Nullable(Float64);
-ALTER TABLE attmon.node_events ADD COLUMN IF NOT EXISTS proc_dbread_ms     Nullable(Float64);
-ALTER TABLE attmon.node_events ADD COLUMN IF NOT EXISTS proc_dbwrite_ms    Nullable(Float64);
-ALTER TABLE attmon.node_events ADD COLUMN IF NOT EXISTS proc_postexec_ms   Nullable(Float64);
+-- Retired: the six proc_* per-substep columns. Lighthouse does NOT log
+-- per-substep block-processing timings (decode / state / fork-choice / DB /
+-- post-exec) on any line — only the coarse consensus/execution/imported/
+-- set_as_head durations on the On-time/Delayed head block lines. Those four
+-- are summed into block_processing_ms in attestation_diagnostics instead.
+ALTER TABLE attmon.node_events DROP COLUMN IF EXISTS proc_decode_ms;
+ALTER TABLE attmon.node_events DROP COLUMN IF EXISTS proc_state_ms;
+ALTER TABLE attmon.node_events DROP COLUMN IF EXISTS proc_forkchoice_ms;
+ALTER TABLE attmon.node_events DROP COLUMN IF EXISTS proc_dbread_ms;
+ALTER TABLE attmon.node_events DROP COLUMN IF EXISTS proc_dbwrite_ms;
+ALTER TABLE attmon.node_events DROP COLUMN IF EXISTS proc_postexec_ms;
 
 -- Legacy layer-2 table kept for compatibility (Delayed head block only)
 CREATE TABLE IF NOT EXISTS attmon.node_logs
@@ -207,12 +203,6 @@ WITH
             e.num_expected AS num_expected,
             e.num_fetched AS num_fetched,
             e.count AS count,
-            e.proc_decode_ms AS proc_decode_ms,
-            e.proc_state_ms AS proc_state_ms,
-            e.proc_forkchoice_ms AS proc_forkchoice_ms,
-            e.proc_dbread_ms AS proc_dbread_ms,
-            e.proc_dbwrite_ms AS proc_dbwrite_ms,
-            e.proc_postexec_ms AS proc_postexec_ms,
             e.detail AS detail
         FROM attmon.node_events AS e
         LEFT JOIN root_map AS r ON r.block_root = e.block_root
@@ -250,16 +240,6 @@ SELECT
     maxIf(imported_time_ms, event = 'delayed_head')              AS imported_time_ms,
     maxIf(set_as_head_time_ms, event = 'delayed_head')           AS set_as_head_time_ms,
     maxIf(total_delay_ms, event = 'delayed_head')                AS total_delay_ms,
-    -- block-processing sub-step breakdown (DEBUG-only). Offset = when the
-    -- processing summary was logged; durations are per-step (ms).
-    minIfOrNull(toUnixTimestamp64Milli(ts), event = 'block_processing') / 1000.0
-        - (genesis + slot * 12)                                  AS proc_start_s,
-    maxIf(proc_decode_ms, event = 'block_processing')            AS proc_decode_ms,
-    maxIf(proc_state_ms, event = 'block_processing')             AS proc_state_ms,
-    maxIf(proc_forkchoice_ms, event = 'block_processing')        AS proc_forkchoice_ms,
-    maxIf(proc_dbread_ms, event = 'block_processing')            AS proc_dbread_ms,
-    maxIf(proc_dbwrite_ms, event = 'block_processing')           AS proc_dbwrite_ms,
-    maxIf(proc_postexec_ms, event = 'block_processing')          AS proc_postexec_ms,
     -- validator client journey
     minIfOrNull(toUnixTimestamp64Milli(ts), event = 'att_start') / 1000.0
         - (genesis + slot * 12)                                  AS att_start_s,
@@ -352,18 +332,21 @@ SELECT
     round(coalesce(t.attestable_delay_ms, t.data_complete_s * 1000)) AS attestable_ms,
     x_imported_ms           AS imported_ms,
     round(t.total_delay_ms) AS head_ready_ms,
-    -- BLOCK-PROCESSING sub-steps (DEBUG-only). proc_start_ms is the shared
-    -- offset; the six *_ms are per-step durations. NULL until the node runs
-    -- with --logfile-debug-level debug and Vector parses the summary line.
-    round(t.proc_start_s * 1000) AS proc_start_ms,
-    round(t.proc_decode_ms)      AS proc_decode_ms,
-    round(t.proc_state_ms)       AS proc_state_ms,
-    round(t.proc_forkchoice_ms)  AS proc_forkchoice_ms,
-    round(t.proc_dbread_ms)      AS proc_dbread_ms,
-    round(t.proc_dbwrite_ms)     AS proc_dbwrite_ms,
-    round(t.proc_postexec_ms)    AS proc_postexec_ms,
-    -- PROCESS DURATIONS: how long each verify/import step took (ms; consensus
-    -- + EL verify only on late blocks today, all blocks once debug is on).
+    -- BLOCK PROCESSING: how long the node actually spent PROCESSING the block
+    -- = consensus + EL-execution + import-write + set-as-head durations. This
+    -- is node CPU/disk time; it EXCLUDES network/propagation & blob wait (those
+    -- live in block_seen_ms / available_ms / head_ready_ms). Lighthouse only
+    -- logs this per-block breakdown on the On-time/Delayed head block lines, so
+    -- it is NULL for range-synced blocks. Per-substep timings (decode / fork
+    -- choice / DB) are NOT emitted by Lighthouse on any line — only as aggregate
+    -- Prometheus histograms — so no finer per-block split is possible.
+    if(t.consensus_time_ms IS NULL AND t.execution_time_ms IS NULL
+           AND t.imported_time_ms IS NULL AND t.set_as_head_time_ms IS NULL,
+       NULL,
+       round(coalesce(t.consensus_time_ms, 0) + coalesce(t.execution_time_ms, 0)
+           + coalesce(t.imported_time_ms, 0) + coalesce(t.set_as_head_time_ms, 0))
+    )                            AS block_processing_ms,
+    -- the four component durations that make up block_processing_ms (ms).
     round(t.consensus_time_ms)   AS consensus_verify_ms,
     round(t.execution_time_ms)   AS el_verify_ms,
     round(t.imported_time_ms)    AS import_write_ms,

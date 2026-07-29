@@ -129,12 +129,10 @@ transforms:
         c_m = parse_regex(raw, r'count: (?P<v>\d+)') ?? {}
         out.event = "partials_published"
         out.count = if is_string(c_m.v) { to_int(c_m.v) ?? null } else { null }
-      # NOTE: the finer block-processing sub-steps (decode / state route / fork
-      # choice / DB read / DB write / post exec) are NOT emitted by this
-      # Lighthouse version — it only logs the coarse consensus_time_ms /
-      # execution_time_ms / imported_time_ms / set_as_head_time_ms breakdown on
-      # the On-time/Delayed head block lines above. Those proc_* columns stay
-      # NULL unless a build that logs per-substep timings is deployed.
+      # NOTE: block_processing_ms (total node processing time) is derived in the
+      # attestation_diagnostics view by summing the four durations parsed above
+      # (consensus + execution + imported + set_as_head). Lighthouse does not log
+      # a finer per-substep split on any line, so nothing more to parse here.
       } else {
         abort
       }

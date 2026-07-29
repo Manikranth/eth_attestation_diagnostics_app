@@ -287,10 +287,10 @@
       <p class="note">Every timing column shows <b>two numbers</b>: <b>offset (duration)</b> — how far into the 12s slot window the step happened, then how long that step took. A <b>–</b> means that half isn't available. Tagged <b>BN</b> (beacon node), <b>EL</b> (execution layer) or <b>VC</b> (validator client). <b>BN consensus / EL verify / block import / head import</b> come from Lighthouse's On-time/Delayed head block breakdown (populated once the indexer + vector run against a synced node).</p>
       <dl>
         <dt>Block available / Block arrival</dt><dd>when the block was fully available for attesting, and when it first arrived + was verified on gossip (with how late it was).</dd>
-        <dt>decode · state route · fork choice · DB read · DB write · post exec</dt><dd><b>placeholders</b> — this Lighthouse version does not log per-substep block-processing timings. The coarse consensus / execution durations it does log appear under BN consensus / EL verify.</dd>
+        <dt>block proc</dt><dd><b>how long the node actually spent processing the block</b> = consensus + EL verify + import-write + set-as-head (the four are broken out under VERIFY + IMPORT). Node CPU/disk time — <b>excludes</b> network propagation and blob wait. Over ~1s is slow. Blank for range-synced blocks (only logged at head). Lighthouse does not log a finer per-substep split; those exist only as fleet-aggregate Prometheus histograms.</dd>
         <dt>blob src</dt><dd>where the blobs came from: <b>gossip</b>, <b>el</b> (getBlobs from execution), <b>gossip+el</b>, or <b>none</b>.</dd>
         <dt>blob arrival / fetch·exp / cols / blob verify</dt><dd>first blob seen (offset), blobs served/expected by the EL, columns held via the EL, and when all data was verified + available.</dd>
-        <dt>BN consensus / EL verify</dt><dd>how long consensus and execution-layer verification took. Full per-block durations need DEBUG logs (today only late blocks carry them).</dd>
+        <dt>BN consensus / EL verify</dt><dd>the consensus and execution-layer verification durations — the two biggest components of <b>block proc</b>. Logged on every head block; blank only for range-synced blocks.</dd>
         <dt>block import / head import</dt><dd>block written into fork choice, then set as head (offset into slot, with the write / set-as-head durations).</dd>
         <dt>VC att start / sign + pub</dt><dd>when the VC began producing, and how long produce+sign+publish took.</dd>
         <dt>bottleneck</dt><dd>the slowest step this slot.</dd>
@@ -342,7 +342,7 @@
         <th colspan="3" class="groupedge">INCLUSION</th>
         <th colspan="3" class="groupedge">NODE</th>
         <th colspan="2" class="groupedge" title="block received on our beacon node">RECEIVE · BN</th>
-        <th colspan="6" class="groupedge" title="per-substep block-processing timings — NOT emitted by this Lighthouse version (it only logs the coarse consensus/execution breakdown, shown under VERIFY + IMPORT). Placeholders.">BLOCK PROCESSING · BN</th>
+        <th class="groupedge" title="total time the node spent PROCESSING the block = consensus + EL verify + import + set-as-head. Node CPU/disk time, excludes network &amp; blob wait. The four components are broken out under VERIFY + IMPORT.">BLOCK PROC · BN</th>
         <th colspan="5" class="groupedge" title="blob / data-column arrival — where from and when">BLOBS · BN/EL</th>
         <th colspan="4" class="groupedge" title="verify + import: offset (duration)">VERIFY + IMPORT · BN/EL</th>
         <th colspan="5" class="groupedge" title="validator client: produce, sign, publish">VALIDATOR CLIENT · VC</th>
@@ -369,13 +369,8 @@
         <!-- ATTESTATION · RECEIVE -->
         <th class="groupedge lyr" data-lyr="BN" title="block fully available for attesting. offset into slot (time from first-seen to available)">Block available</th>
         <th class="lyr" data-lyr="BN" title="block first seen + verified on gossip. offset into slot (how late lighthouse judged it)">Block arrival</th>
-        <!-- ATTESTATION · BLOCK PROCESSING (debug) -->
-        <th class="groupedge lyr" data-lyr="BN" title="decode / initial checks — NOT emitted by this Lighthouse version (placeholder)">decode</th>
-        <th class="lyr" data-lyr="BN" title="state load / state-root route — NOT emitted by this Lighthouse version (placeholder)">state route</th>
-        <th class="lyr" data-lyr="BN" title="fork choice update — NOT emitted by this Lighthouse version (placeholder)">fork choice</th>
-        <th class="lyr" data-lyr="BN" title="database read — NOT emitted by this Lighthouse version (placeholder)">DB read</th>
-        <th class="lyr" data-lyr="BN" title="database write — NOT emitted by this Lighthouse version (placeholder)">DB write</th>
-        <th class="lyr" data-lyr="BN" title="post-execution work — NOT emitted by this Lighthouse version (placeholder)">post exec</th>
+        <!-- ATTESTATION · BLOCK PROCESSING (total) -->
+        <th class="groupedge lyr" data-lyr="BN" title="how long the node actually spent processing this block = consensus + EL verify + import + set-as-head. >1s is slow. Excludes network/blob wait. NULL for range-synced blocks (only logged at head).">block proc</th>
         <!-- ATTESTATION · BLOBS -->
         <th class="groupedge lyr" data-lyr="BN/EL" title="where the blobs/data columns came from: gossip, el (getBlobs), gossip+el, or none">blob src</th>
         <th class="lyr" data-lyr="BN" title="first blob/data-column seen on gossip — offset into slot">blob arrival</th>
@@ -455,6 +450,7 @@ const FIELD_OPTIONS = [
   ['blob_source', 'blob src'],
   ['blobs_from_el', 'blobs from EL'],
   ['cols_via_el', 'cols'],
+  ['block_processing_ms', 'block proc'],
   ['consensus_verify_ms', 'BN consensus'],
   ['el_verify_ms', 'EL verify'],
   ['att_failures', 'VC fails'],
@@ -497,21 +493,16 @@ const COLUMN_HELP = {
   'sync': 'Lighthouse sync state at the slot tick.',
   'Block available': 'When the block became fully available for attesting. Shown as offset into slot with duration in parentheses.',
   'Block arrival': 'When the block was first seen and verified on gossip. Parentheses show how late Lighthouse judged it.',
-  'decode': 'Placeholder for decode / initial block checks. This Lighthouse version does not emit this per-step timing.',
-  'state route': 'Placeholder for state load / state-root route timing. This Lighthouse version does not emit this per-step timing.',
-  'fork choice': 'Placeholder for fork-choice update timing. This Lighthouse version does not emit this per-step timing.',
-  'DB read': 'Placeholder for database-read timing. This Lighthouse version does not emit this per-step timing.',
-  'DB write': 'Placeholder for database-write timing. This Lighthouse version does not emit this per-step timing.',
-  'post exec': 'Placeholder for post-execution work timing. This Lighthouse version does not emit this per-step timing.',
+  'block proc': 'Total time the node spent PROCESSING this block = consensus + EL verify + import-write + set-as-head (the four components broken out under VERIFY + IMPORT). This is node CPU/disk time and EXCLUDES network propagation and blob wait (see Block arrival / Block available). Over ~1s is slow. Only logged on the On-time/Delayed head block lines, so it is blank for range-synced blocks. Lighthouse does not log a finer per-substep split (decode / fork choice / DB) on any line — those exist only as aggregate Prometheus histograms.',
   'blob src': 'Where blob/data-column data came from: gossip, el, gossip+el, none, or blank when unknown.',
   'blob arrival': 'Offset when the first blob/data-column arrived via gossip.',
   'blob fetch/exp': 'Blobs fetched from the execution layer as fetched/expected. Example: 3/3 means all expected blobs came from the EL.',
   'cols': 'Data columns already available through the execution-layer path.',
   'blob verify': 'Offset when all required blob/data-column data was verified and available.',
-  'BN consensus': 'Beacon-node consensus verification duration: consensus-side block validity, signatures, state-transition and fork-choice checks.',
-  'EL verify': 'Execution-layer verification duration: execution payload validity through the EL / engine API path.',
-  'block import': 'When the block was written into fork choice. Parentheses show import/write duration when Lighthouse logged it.',
-  'head import': 'When the block was set as head. Parentheses show set-as-head duration when Lighthouse logged it.',
+  'BN consensus': 'Consensus-verification duration (component of block proc): block validity, signatures, state-transition and fork-choice checks. Duration only; there is no separate per-block start offset in the log.',
+  'EL verify': 'Execution-layer verification duration (component of block proc): execution payload validity through the EL / engine API path. Over ~1s points to EL CPU/disk slowness.',
+  'block import': 'When the block was written into fork choice (offset into slot). Parentheses show the import/write duration — a component of block proc.',
+  'head import': 'When the block was set as head (offset into slot). Parentheses show the set-as-head duration — a component of block proc.',
   'VC att start': 'Offset when the validator client began producing the attestation.',
   'sign + pub': 'Validator-client produce + sign + publish duration.',
   'VC fails': 'Count of attestation production failures for this slot.',
@@ -650,13 +641,8 @@ function renderRows(rows) {
       // RECEIVE [BN]
       pairCell(r.available_ms, r.avail_dur_ms, true) +
       pairCell(r.block_seen_ms, r.gossip_late_by_ms) +
-      // BLOCK PROCESSING [BN] — DEBUG logs only (dashed until debug on)
-      pairCell(r.proc_start_ms, r.proc_decode_ms, true, 2000, 4000) +
-      pairCell(r.proc_start_ms, r.proc_state_ms, false, 2000, 4000) +
-      pairCell(r.proc_start_ms, r.proc_forkchoice_ms, false, 2000, 4000) +
-      pairCell(r.proc_start_ms, r.proc_dbread_ms, false, 2000, 4000) +
-      pairCell(r.proc_start_ms, r.proc_dbwrite_ms, false, 2000, 4000) +
-      pairCell(r.proc_start_ms, r.proc_postexec_ms, false, 2000, 4000) +
+      // BLOCK PROCESSING [BN] — total node processing time (consensus+EL+import+set-head)
+      msCell(r.block_processing_ms, true, 1000, 2000) +
       // BLOBS / DATA [BN/EL]
       txtCell(r.blob_source, true, 10) +
       pairCell(r.gossip_blob_arrival_ms, null) +
@@ -664,8 +650,8 @@ function renderRows(rows) {
       numCell(r.cols_via_el) +
       pairCell(r.blobs_ready_ms, null) +
       // VERIFY + IMPORT [BN/EL]
-      pairCell(r.proc_start_ms, r.consensus_verify_ms, true, 500, 2000) +
-      pairCell(r.proc_start_ms, r.el_verify_ms, false, 500, 2000) +
+      pairCell(null, r.consensus_verify_ms, true, 500, 2000) +
+      pairCell(null, r.el_verify_ms, false, 500, 2000) +
       pairCell(r.imported_ms, r.import_write_ms) +
       pairCell(r.head_ready_ms, r.set_as_head_ms) +
       // VALIDATOR CLIENT [VC]
