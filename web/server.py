@@ -62,6 +62,45 @@ def parse_filter_int(qs, name):
     return value
 
 
+def parse_filter_int_list(qs, name, max_items=200):
+    raw = qs.get(name, [""])[0].strip()
+    if raw == "":
+        return []
+    values = []
+    for part in raw.split(","):
+        part = part.strip()
+        if part == "":
+            continue
+        try:
+            value = int(part)
+        except ValueError:
+            raise ValueError(f"bad {name}")
+        if value < 0:
+            raise ValueError(f"bad {name}")
+        values.append(value)
+    if len(values) > max_items:
+        raise ValueError(f"too many {name}")
+    return values
+
+
+def parse_filter_pubkey_list(qs, name, max_items=200):
+    raw = qs.get(name, [""])[0].strip()
+    if raw == "":
+        return []
+    values = []
+    for part in raw.split(","):
+        part = part.strip()
+        if part == "":
+            continue
+        body = part[2:] if part.startswith("0x") else ""
+        if not body or any(c not in "0123456789abcdefABCDEF" for c in body):
+            raise ValueError(f"bad {name}")
+        values.append(part.lower())
+    if len(values) > max_items:
+        raise ValueError(f"too many {name}")
+    return values
+
+
 def sql_string(value):
     return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
 
@@ -81,12 +120,29 @@ def generic_field_filter(qs):
 def diagnostics_sql(qs):
     epoch = parse_filter_int(qs, "epoch")
     slot = parse_filter_int(qs, "slot")
+    from_slot = parse_filter_int(qs, "from_slot")
+    to_slot = parse_filter_int(qs, "to_slot")
+    validator_indices = parse_filter_int_list(qs, "validators")
+    validator_pubkeys = parse_filter_pubkey_list(qs, "pubkeys")
     generic_filter = generic_field_filter(qs)
     filters = []
     if epoch is not None:
         filters.append(f"epoch = {epoch}")
     if slot is not None:
         filters.append(f"slot = {slot}")
+    if from_slot is not None or to_slot is not None:
+        if from_slot is None or to_slot is None or from_slot > to_slot:
+            raise ValueError("bad slot range")
+        # CSV imports can cover an hour or day. Keep ad-hoc browser queries
+        # bounded so one upload cannot accidentally materialise the whole view.
+        if to_slot - from_slot > 8000:
+            raise ValueError("slot range too large")
+        filters.append(f"slot >= {from_slot}")
+        filters.append(f"slot <= {to_slot}")
+    if validator_indices:
+        filters.append("validator_index IN (" + ",".join(str(v) for v in validator_indices) + ")")
+    if validator_pubkeys:
+        filters.append("validator_pubkey IN (" + ",".join(sql_string(v) for v in validator_pubkeys) + ")")
     if generic_filter:
         filters.append(generic_filter)
     if filters:

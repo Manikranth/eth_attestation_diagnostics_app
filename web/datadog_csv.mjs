@@ -369,6 +369,14 @@ function maxEventValue(events, name, field) {
   return values.length ? values[values.length - 1] : null;
 }
 
+function eventMatchesIdentity(event, pubkey, validatorIndex) {
+  if (event.validator_pubkey) return pubkey && event.validator_pubkey === pubkey;
+  if (event.validator_index !== undefined && event.validator_index !== null) {
+    return validatorIndex !== null && event.validator_index === validatorIndex;
+  }
+  return true;
+}
+
 function buildDiagnosticRows(events) {
   const bySlot = new Map();
   for (const event of events) {
@@ -397,21 +405,15 @@ function buildDiagnosticRows(events) {
     for (const identity of rowIdentities) {
       const pubkey = identity.pubkey;
       const validatorIndex = identity.validatorIndex;
-      const scopedEvents = slotEvents.filter(e => {
-        if (e.validator_pubkey) return pubkey && e.validator_pubkey === pubkey;
-        if (e.validator_index !== undefined && e.validator_index !== null) {
-          return validatorIndex !== null && e.validator_index === validatorIndex;
-        }
-        return true;
-      });
+      const scopedEvents = slotEvents.filter(e => eventMatchesIdentity(e, pubkey, validatorIndex));
       const row = emptyDiagnosticRow(slot, pubkey, validatorIndex);
 
       const delayed = scopedEvents.filter(e => e.event === 'delayed_head').at(-1);
       const slotTimer = scopedEvents.filter(e => e.event === 'slot_timer').at(-1);
-      const attStart = scopedEvents.find(e => e.event === 'att_start' && (!pubkey || e.validator_pubkey === pubkey));
-      const attPublished = scopedEvents.find(e => e.event === 'att_published' && (!pubkey || e.validator_pubkey === pubkey));
-      const attFailed = scopedEvents.find(e => e.event === 'att_failed' && (!pubkey || e.validator_pubkey === pubkey));
-      const signerLatency = scopedEvents.find(e => e.event === 'signer_latency' && (!pubkey || e.validator_pubkey === pubkey));
+      const attStart = scopedEvents.find(e => e.event === 'att_start' && eventMatchesIdentity(e, pubkey, validatorIndex));
+      const attPublished = scopedEvents.find(e => e.event === 'att_published' && eventMatchesIdentity(e, pubkey, validatorIndex));
+      const attFailed = scopedEvents.find(e => e.event === 'att_failed' && eventMatchesIdentity(e, pubkey, validatorIndex));
+      const signerLatency = scopedEvents.find(e => e.event === 'signer_latency' && eventMatchesIdentity(e, pubkey, validatorIndex));
 
       row.block_seen_ms = delayed?.observed_delay_ms ?? minOffset(scopedEvents, ['gossip_verified', 'new_block']);
       row.block_root = scopedEvents.map(e => e.block_root).find(Boolean) || '';
@@ -468,17 +470,8 @@ function buildDiagnosticRows(events) {
       if (row.att_start_ms !== null && row.total_attestation_lifecycle_ms !== null) {
         row.vc_publish_dur_ms = row.vc_publish_dur_ms ?? row.total_attestation_lifecycle_ms - row.att_start_ms;
       }
-      row.agg_published_ms = minOffset(scopedEvents.filter(e => {
-        if (e.validator_pubkey) return !pubkey || e.validator_pubkey === pubkey;
-        if (e.validator_index !== undefined && e.validator_index !== null) return validatorIndex === null || e.validator_index === validatorIndex;
-        return true;
-      }), ['agg_published']);
-      row.att_failures = scopedEvents.filter(e => {
-        if (e.event !== 'att_failed') return false;
-        if (e.validator_pubkey) return !pubkey || e.validator_pubkey === pubkey;
-        if (e.validator_index !== undefined && e.validator_index !== null) return validatorIndex === null || e.validator_index === validatorIndex;
-        return true;
-      }).length;
+      row.agg_published_ms = minOffset(scopedEvents.filter(e => eventMatchesIdentity(e, pubkey, validatorIndex)), ['agg_published']);
+      row.att_failures = scopedEvents.filter(e => e.event === 'att_failed' && eventMatchesIdentity(e, pubkey, validatorIndex)).length;
       row.att_fail_reason = attFailed?.detail || '';
 
       const hasGossip = (row.blobs_from_gossip ?? 0) > 0;
@@ -502,6 +495,49 @@ function buildDiagnosticRows(events) {
   return rows.sort((a, b) => (b.slot ?? 0) - (a.slot ?? 0));
 }
 
+function isBlank(value) {
+  return value === null || value === undefined || value === '';
+}
+
+function csvMatchesClickhouseRow(csvRow, chRow) {
+  if (csvRow.slot !== chRow.slot) return false;
+  if (!isBlank(csvRow.validator_index) && !isBlank(chRow.validator_index)) {
+    return Number(csvRow.validator_index) === Number(chRow.validator_index);
+  }
+  if (!isBlank(csvRow.validator_pubkey) && !isBlank(chRow.validator_pubkey)) {
+    return csvRow.validator_pubkey === chRow.validator_pubkey;
+  }
+  return isBlank(csvRow.validator_index) && isBlank(csvRow.validator_pubkey);
+}
+
+function mergeOneDiagnosticsRow(chRow, csvRows) {
+  const merged = { ...chRow };
+  for (const csvRow of csvRows) {
+    if (!csvMatchesClickhouseRow(csvRow, chRow)) continue;
+    for (const [key, value] of Object.entries(csvRow)) {
+      if (isBlank(value)) continue;
+      if (key === 'fault_attribution' && !isBlank(merged[key]) && merged[key] !== 'unknown') continue;
+      if (isBlank(merged[key])) merged[key] = value;
+    }
+  }
+  return merged;
+}
+
+export function mergeDiagnosticsRows(clickhouseRows, csvRows) {
+  if (!clickhouseRows.length) return csvRows;
+  const merged = clickhouseRows.map(row => mergeOneDiagnosticsRow(row, csvRows));
+  const matchedCsv = new Set();
+  for (const chRow of clickhouseRows) {
+    csvRows.forEach((csvRow, i) => {
+      if (csvMatchesClickhouseRow(csvRow, chRow)) matchedCsv.add(i);
+    });
+  }
+  csvRows.forEach((csvRow, i) => {
+    if (!matchedCsv.has(i)) merged.push(csvRow);
+  });
+  return merged.sort((a, b) => (b.slot ?? 0) - (a.slot ?? 0));
+}
+
 export function parseDatadogCsv(text, overrides = {}) {
   const parsed = parseCsv(text);
   const mapping = { ...detectDatadogMapping(parsed.headers), ...overrides };
@@ -522,6 +558,9 @@ export function parseDatadogCsv(text, overrides = {}) {
     if (event) events.push(event);
     else ignoredRows++;
   }
+  const slots = [...new Set(events.map(e => e.slot).filter(v => v !== null && v !== undefined))].sort((a, b) => a - b);
+  const validatorIndices = [...new Set(events.map(e => e.validator_index).filter(v => v !== null && v !== undefined))].sort((a, b) => a - b);
+  const validatorPubkeys = [...new Set(events.map(e => e.validator_pubkey).filter(Boolean))].sort();
 
   return {
     headers: parsed.headers,
@@ -532,6 +571,11 @@ export function parseDatadogCsv(text, overrides = {}) {
       totalRows: parsed.rows.length,
       parsedEvents: events.length,
       ignoredRows,
+      minSlot: slots.length ? slots[0] : null,
+      maxSlot: slots.length ? slots[slots.length - 1] : null,
+      slots,
+      validatorIndices,
+      validatorPubkeys,
     },
   };
 }

@@ -470,7 +470,7 @@
 </footer>
 
 <script type="module">
-import { parseCsv, detectDatadogMapping, parseDatadogCsv } from './datadog_csv.mjs';
+import { parseCsv, detectDatadogMapping, mergeDiagnosticsRows, parseDatadogCsv } from './datadog_csv.mjs';
 
 const POLL_MS = 12000;           // one slot
 // inFlight: never let a second request start while one is outstanding. A slow
@@ -821,25 +821,59 @@ function populateCsvMapping(headers, mapping) {
   $('csvSource').innerHTML = optionList(headers, mapping.source, true);
 }
 
-function renderCsvWithMapping() {
+async function fetchCsvDiagnostics(stats) {
+  if (stats.minSlot === null || stats.maxSlot === null) return [];
+  const params = new URLSearchParams();
+  params.set('from_slot', stats.minSlot);
+  params.set('to_slot', stats.maxSlot);
+  if (stats.validatorIndices.length) {
+    params.set('validators', stats.validatorIndices.join(','));
+  }
+  if (stats.validatorPubkeys.length) {
+    params.set('pubkeys', stats.validatorPubkeys.join(','));
+  }
+  const res = await fetch('/api/diagnostics?' + params.toString());
+  if (!res.ok) throw new Error('diagnostics HTTP ' + res.status);
+  const data = await res.json();
+  if (data.error) throw new Error(data.error);
+  return data.rows;
+}
+
+async function renderCsvWithMapping() {
   if (!csvText) return;
   const result = parseDatadogCsv(csvText, {
     timestamp: $('csvTimestamp').value,
     message: $('csvMessage').value,
     source: $('csvSource').value,
   });
-  csvRows = result.rows;
-  lastSlots = new Set();
-  renderRows(csvRows);
-  $('csvStats').innerHTML =
-    `rows <b>${result.stats.totalRows}</b> · events <b>${result.stats.parsedEvents}</b> · ignored <b>${result.stats.ignoredRows}</b> · table rows <b>${csvRows.length}</b>`;
-  $('live').className = csvRows.length ? 'live stale' : 'live err';
-  $('livetext').textContent = csvRows.length ? 'CSV' : 'NO CSV ROWS';
-  $('updated').textContent = csvRows.length ? 'csv preview loaded' : 'csv had no recognized Lighthouse rows';
+  $('live').className = 'live stale';
+  $('livetext').textContent = 'CSV QUERY';
+  $('updated').textContent = 'loading ClickHouse diagnostics for csv slots';
+  try {
+    const diagnosticsRows = await fetchCsvDiagnostics(result.stats);
+    csvRows = mergeDiagnosticsRows(diagnosticsRows, result.rows);
+    lastSlots = new Set();
+    renderRows(csvRows);
+    $('csvStats').innerHTML =
+      `rows <b>${result.stats.totalRows}</b> · events <b>${result.stats.parsedEvents}</b> · ignored <b>${result.stats.ignoredRows}</b> · slots <b>${result.stats.minSlot ?? '–'}-${result.stats.maxSlot ?? '–'}</b> · clickhouse <b>${diagnosticsRows.length}</b> · table rows <b>${csvRows.length}</b>`;
+    $('live').className = csvRows.length ? 'live stale' : 'live err';
+    $('livetext').textContent = csvRows.length ? 'CSV+CH' : 'NO CSV ROWS';
+    $('updated').textContent = csvRows.length ? 'csv enriched from ClickHouse diagnostics' : 'csv had no recognized rows and no diagnostics matches';
+  } catch (e) {
+    csvRows = result.rows;
+    lastSlots = new Set();
+    renderRows(csvRows);
+    $('csvStats').innerHTML =
+      `rows <b>${result.stats.totalRows}</b> · events <b>${result.stats.parsedEvents}</b> · ignored <b>${result.stats.ignoredRows}</b> · clickhouse <b>error</b>`;
+    $('live').className = csvRows.length ? 'live stale' : 'live err';
+    $('livetext').textContent = csvRows.length ? 'CSV ONLY' : 'NO CSV ROWS';
+    $('updated').textContent = 'ClickHouse enrichment failed: ' + e.message;
+  }
   $('next').textContent = 'csv preview';
 }
 
 setInterval(() => {
+  if (activeTab !== 'live') { $('next').textContent = 'csv preview'; return; }
   if (paused) { $('next').textContent = 'paused'; return; }
   const left = Math.max(0, Math.ceil((timerEnd - Date.now()) / 1000));
   $('next').textContent = 'next refresh ' + left + 's';
@@ -879,7 +913,7 @@ $('csvFile').onchange = async () => {
   const mapping = detectDatadogMapping(csvHeaders);
   populateCsvMapping(csvHeaders, mapping);
   $('csvStats').innerHTML = `loaded <b>${esc(file.name)}</b> · csv rows <b>${parsed.rows.length}</b>`;
-  renderCsvWithMapping();
+  await renderCsvWithMapping();
 };
 $('csvApply').onclick = renderCsvWithMapping;
 $('csvClear').onclick = () => {

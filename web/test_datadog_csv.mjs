@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   parseCsv,
   detectDatadogMapping,
+  mergeDiagnosticsRows,
   parseDatadogCsv,
 } from './datadog_csv.mjs';
 
@@ -129,6 +130,9 @@ test('parseDatadogCsv maps validator failures and publish rows by inferred slot'
   const result = parseDatadogCsv(csv);
 
   assert.equal(result.stats.parsedEvents, 2);
+  assert.equal(result.stats.minSlot, 3590743);
+  assert.equal(result.stats.maxSlot, 3590744);
+  assert.deepEqual(result.stats.validatorIndices, [12345]);
   assert.equal(result.rows.length, 2);
 
   const published = result.rows.find(r => r.slot === 3590743);
@@ -162,4 +166,34 @@ test('parseDatadogCsv maps signer pubkey and signer latency', () => {
 
   const second = result.rows.find(r => r.validator_pubkey.startsWith('0xcc'));
   assert.equal(second.vc_publish_dur_ms, 77);
+});
+
+test('mergeDiagnosticsRows keeps ClickHouse facts and fills blanks from CSV logs', () => {
+  const clickhouseRows = [{
+    slot: 3590633,
+    validator_index: 12345,
+    validator_pubkey: '0xabc',
+    inclusion_distance: 1,
+    fault_attribution: 'perfect',
+    block_seen_ms: null,
+    peers: null,
+  }];
+  const csvRows = [{
+    slot: 3590633,
+    validator_index: null,
+    validator_pubkey: '',
+    inclusion_distance: null,
+    fault_attribution: 'log_preview',
+    block_seen_ms: 1339,
+    peers: 200,
+  }];
+
+  const merged = mergeDiagnosticsRows(clickhouseRows, csvRows);
+
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0].validator_index, 12345);
+  assert.equal(merged[0].inclusion_distance, 1);
+  assert.equal(merged[0].fault_attribution, 'perfect');
+  assert.equal(merged[0].block_seen_ms, 1339);
+  assert.equal(merged[0].peers, 200);
 });

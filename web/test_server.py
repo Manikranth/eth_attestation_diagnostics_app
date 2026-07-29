@@ -39,6 +39,33 @@ class DiagnosticsFilterTest(unittest.TestCase):
         self.assertIn("WHERE slot = 384", calls[0])
         self.assertNotIn("max(epoch)", calls[0])
 
+    def test_slot_range_filter_queries_that_range(self):
+        calls, body = self.fetch_diagnostics("?from_slot=100&to_slot=140")
+
+        self.assertEqual(body["json"]["rows"], [{"epoch": 12, "slot": 384}])
+        self.assertEqual(len(calls), 1)
+        self.assertIn("WHERE slot >= 100 AND slot <= 140", calls[0])
+        self.assertNotIn("max(epoch)", calls[0])
+
+    def test_slot_range_can_filter_validator_indices(self):
+        calls, _ = self.fetch_diagnostics("?from_slot=100&to_slot=140&validators=12,34")
+
+        self.assertEqual(len(calls), 1)
+        self.assertIn("validator_index IN (12,34)", calls[0])
+
+    def test_slot_range_can_filter_validator_pubkeys(self):
+        calls, _ = self.fetch_diagnostics("?from_slot=100&to_slot=140&pubkeys=0xabc,0xdef")
+
+        self.assertEqual(len(calls), 1)
+        self.assertIn("validator_pubkey IN ('0xabc','0xdef')", calls[0])
+
+    def test_bad_slot_range_returns_400(self):
+        calls, body = self.fetch_diagnostics("?from_slot=200&to_slot=100")
+
+        self.assertEqual(calls, [])
+        self.assertEqual(body["code"], 400)
+        self.assertEqual(body["json"]["error"], "bad slot range")
+
     def test_exact_epoch_filter_queries_only_that_epoch(self):
         calls, _ = self.fetch_diagnostics("?epoch=12")
 
