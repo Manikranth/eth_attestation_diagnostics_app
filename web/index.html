@@ -267,87 +267,6 @@
   .empty {
     padding: 3rem; text-align: center; color: var(--dim); letter-spacing: .1em;
   }
-
-  /* ===== TIMELINE (per-slot gantt) ===== */
-  #timelinewrap { flex: 1; overflow: auto; padding: .8rem 1.4rem 2rem; }
-  #timelinewrap.hidden { display: none; }
-  .tl-legend {
-    display: flex; gap: 1.4rem; flex-wrap: wrap; align-items: center;
-    color: var(--dim); font-size: .74rem; letter-spacing: .05em;
-    padding-bottom: .7rem; margin-bottom: .5rem; border-bottom: 1px solid var(--line);
-    position: sticky; top: 0; background: var(--bg); z-index: 3;
-  }
-  .tl-legend .k { display: inline-flex; align-items: center; gap: .4em; }
-  .tl-legend .sw { width: 11px; height: 11px; border-radius: 2px; display: inline-block; }
-  .tl-legend .sw.bn { background: var(--phosphor); box-shadow: var(--glow); }
-  .tl-legend .sw.el { background: var(--amber); }
-  .tl-legend .sw.vc { background: var(--cyan); }
-
-  .tl-row { padding: .55rem 0 .7rem; border-bottom: 1px solid var(--line); }
-  .tl-row.fresh { animation: land .9s ease-out; }
-  .tl-head {
-    display: flex; gap: 1rem; align-items: baseline; flex-wrap: wrap;
-    font-size: .78rem; margin-bottom: .35rem;
-  }
-  .tl-head .slot { color: var(--phosphor); font-weight: 600; letter-spacing: .05em; }
-  .tl-head .vidx { color: var(--text); }
-  .tl-head .utc  { color: var(--dim); }
-
-  /* fixed 0–12s canvas; a left gutter for lane labels + the track area */
-  .tl-canvas { display: grid; grid-template-columns: 2.6rem 1fr; gap: 0 .5rem; }
-  .tl-scale {                     /* 0/4/8/12s axis above the lanes */
-    grid-column: 2; position: relative; height: 1.1rem;
-    color: var(--dim); font-size: .68rem;
-  }
-  .tl-scale span { position: absolute; transform: translateX(-50%); top: 0; white-space: nowrap; }
-  .tl-scale span.l0  { left: 0;      transform: none; }
-  .tl-scale span.l12 { left: 100%;   transform: translateX(-100%); }
-
-  .tl-lanelabel {
-    grid-column: 1; display: flex; align-items: center; justify-content: flex-end;
-    padding-right: .3rem; font-size: .68rem; letter-spacing: .08em; color: var(--dim);
-    height: 18px;
-  }
-  .tl-lanelabel.bn { color: var(--phosphor); }
-  .tl-lanelabel.el { color: var(--amber); }
-  .tl-lanelabel.vc { color: var(--cyan); }
-
-  .tl-lane {
-    grid-column: 2; position: relative; height: 18px; margin: 2px 0;
-    background: var(--bg-row);
-    border: 1px solid var(--line); border-radius: 2px;
-  }
-  /* deadline ticks (4s attest, 8s aggregate) drawn on every lane */
-  .tl-lane::before, .tl-lane::after {
-    content: ""; position: absolute; top: 0; bottom: 0; width: 1px;
-    background: repeating-linear-gradient(var(--line) 0 3px, transparent 3px 6px);
-    pointer-events: none;
-  }
-  .tl-lane::before { left: 33.333%; }   /* 4s */
-  .tl-lane::after  { left: 66.666%; }   /* 8s */
-
-  .tl-seg, .tl-point {
-    position: absolute; top: 50%; transform: translateY(-50%);
-    cursor: default;
-  }
-  .tl-seg {
-    height: 10px; min-width: 2px; border-radius: 2px; opacity: .85;
-  }
-  .tl-point {
-    width: 9px; height: 9px; margin-left: -4.5px;
-    transform: translateY(-50%) rotate(45deg);   /* diamond */
-    border-radius: 1px;
-  }
-  .tl-bn { background: var(--phosphor); box-shadow: var(--glow); }
-  .tl-el { background: var(--amber); }
-  .tl-vc { background: var(--cyan); }
-  .tl-seg.warn { background: var(--amber); box-shadow: none; }
-  .tl-seg.bad, .tl-point.bad { background: var(--red); box-shadow: none; }
-  .tl-point.warn { background: var(--amber); box-shadow: none; }
-  /* processing sub-blocks sit on the BN lane back-to-back, slightly translucent */
-  .tl-sub { height: 10px; opacity: .55; border-right: 1px solid var(--bg); }
-  .tl-empty { color: var(--dim); font-size: .72rem; padding-left: .3rem; }
-
   footer {
     padding: .45em 1.4rem; border-top: 1px solid var(--line);
     color: var(--dim); font-size: .72rem; letter-spacing: .06em;
@@ -380,7 +299,6 @@
 
 <nav class="tabs" aria-label="data source tabs">
   <button class="tab active" id="liveTab">live diagnostics</button>
-  <button class="tab" id="timelineTab">timeline</button>
   <button class="tab" id="datadogTab">datadog csv</button>
 </nav>
 
@@ -542,17 +460,6 @@
     <tbody id="rows"></tbody>
   </table>
   <div class="empty" id="empty" hidden>NO ROWS — indexer may still be backfilling</div>
-</div>
-
-<div class="hidden" id="timelinewrap">
-  <div class="tl-legend">
-    <span class="k"><span class="sw bn"></span>BN — beacon node (gossip · block processing · import)</span>
-    <span class="k"><span class="sw el"></span>EL — execution (blobs · verify)</span>
-    <span class="k"><span class="sw vc"></span>VC — validator client (attest · aggregate · propagate)</span>
-    <span class="k">◆ point&nbsp;event&nbsp;·&nbsp;▬ step&nbsp;duration&nbsp;·&nbsp;dashed = 4s attest / 8s aggregate deadline</span>
-  </div>
-  <div id="tlrows"></div>
-  <div class="empty" id="tlempty" hidden>NO ROWS — indexer may still be backfilling</div>
 </div>
 
 <footer>
@@ -847,104 +754,8 @@ function renderRows(rows) {
     '<span class="chip">no data yet</span>';
 }
 
-// ===== TIMELINE renderer: one 0–12s gantt track per row =====
-const SLOT_MS = 12000;
-const pct = ms => (Math.max(0, Math.min(SLOT_MS, Number(ms))) / SLOT_MS * 100);
-const has = v => v !== null && v !== undefined;
-// color class from an offset (ms) using the same 4.5s/6s attest thresholds as the table
-const offClass = (ms, warn = 4500, bad = 6000) => ms <= warn ? '' : ms <= bad ? 'warn' : 'bad';
-
-// a point (diamond) at an offset; layer = bn|el|vc
-function tlPoint(offMs, layer, label, cls) {
-  if (!has(offMs)) return '';
-  const c = cls ? ' ' + cls : '';
-  return `<div class="tl-point tl-${layer}${c}" style="left:${pct(offMs)}%"`
-    + ` title="${esc(label)} · ${fmtT(offMs / 1000)}"></div>`;
-}
-// a segment (bar) spanning [offMs, offMs+durMs]; if durMs missing → thin marker
-function tlSeg(offMs, durMs, layer, label, cls) {
-  if (!has(offMs)) return '';
-  const w = has(durMs) ? pct(offMs + Number(durMs)) - pct(offMs) : 0;
-  const c = cls ? ' ' + cls : '';
-  const durStr = has(durMs) ? fmtT(Number(durMs) / 1000) : '–';
-  return `<div class="tl-seg tl-${layer}${c}" style="left:${pct(offMs)}%;width:${Math.max(w, 0.4)}%"`
-    + ` title="${esc(label)} · offset ${fmtT(offMs / 1000)} · duration ${durStr}"></div>`;
-}
-// BN block-processing composite: four sub-blocks laid back-to-back, ENDING at head_ready_ms
-function tlProcessing(r) {
-  const end = r.head_ready_ms;
-  if (!has(end)) return '';
-  const parts = [
-    ['consensus_verify_ms', 'BN consensus'],
-    ['el_verify_ms', 'EL verify'],
-    ['import_write_ms', 'block import'],
-    ['set_as_head_ms', 'set as head'],
-  ].map(([k, lbl]) => [Number(r[k]), lbl]).filter(([v]) => has(v) && v > 0);
-  if (!parts.length) return '';
-  const total = parts.reduce((a, [v]) => a + v, 0);
-  let cursor = Number(end) - total;               // start so the chain ends at head_ready
-  let out = '';
-  for (const [v, lbl] of parts) {
-    out += `<div class="tl-seg tl-sub tl-bn" style="left:${pct(cursor)}%;width:${Math.max(pct(cursor + v) - pct(cursor), 0.4)}%"`
-      + ` title="${esc(lbl)} · ${fmtT(v / 1000)}"></div>`;
-    cursor += v;
-  }
-  return out;
-}
-
-function renderTimeline(rows) {
-  const wrap = $('tlrows');
-  const validators = new Set();
-  const frag = [];
-  for (const r of rows) {
-    validators.add(r.validator_index);
-    const fresh = !lastSlots.has(r.slot + ':' + r.validator_index) && lastSlots.size > 0;
-    const attCls = has(r.att_start_ms) ? offClass(Number(r.att_start_ms)) : '';
-
-    // BN lane: seen(pt) · seen→available(seg) · processing(composite) · imported(seg) · set-head(seg)
-    const bn = tlSeg(r.block_seen_ms, r.avail_dur_ms, 'bn', 'seen → available', '')
-      + tlProcessing(r)
-      + tlSeg(r.imported_ms, r.import_write_ms, 'bn', 'block import', '')
-      + tlSeg(r.head_ready_ms, r.set_as_head_ms, 'bn', 'set as head', '')
-      + tlPoint(r.block_seen_ms, 'bn', 'block seen (gossip)', '')
-      + tlPoint(r.head_ready_ms, 'bn', 'head ready', '');
-    // EL lane: getblobs req · blob gossip arrival · blobs ready
-    const el = tlPoint(r.el_getblobs_req_ms, 'el', 'getBlobs request', '')
-      + tlPoint(r.gossip_blob_arrival_ms, 'el', 'blob gossip arrival', '')
-      + tlPoint(r.blobs_ready_ms, 'el', 'blobs ready', '');
-    // VC lane: attest→publish(seg) · att published(pt) · aggregate(pt) · propagation(pt)
-    const vc = tlSeg(r.att_start_ms, r.vc_publish_dur_ms, 'vc', 'attest → publish', attCls)
-      + tlPoint(r.total_attestation_lifecycle_ms, 'vc', 'attestation published', attCls)
-      + tlPoint(r.agg_published_ms, 'vc', 'aggregate published', '')
-      + tlPoint(r.propagation_delay_ms, 'vc', 'propagation seen', '');
-
-    const anyMark = (bn + el + vc).length > 0;
-
-    frag.push(`<div class="tl-row${fresh ? ' fresh' : ''}">`
-      + `<div class="tl-head">`
-      + `<span class="slot">slot ${r.slot}</span>`
-      + `<span class="vidx">v${r.validator_index}</span>`
-      + `<span class="utc">${esc((r.slot_start_utc || '').replace('T', ' '))}</span>`
-      + `<span class="pill ${r.fault_attribution}">${r.fault_attribution}</span>`
-      + `</div>`
-      + `<div class="tl-canvas">`
-      + `<div class="tl-scale"><span class="l0">0s</span><span style="left:33.333%">4s</span>`
-      + `<span style="left:66.666%">8s</span><span class="l12">12s</span></div>`
-      + `<div class="tl-lanelabel bn">BN</div><div class="tl-lane">${bn}</div>`
-      + `<div class="tl-lanelabel el">EL</div><div class="tl-lane">${el}</div>`
-      + `<div class="tl-lanelabel vc">VC</div><div class="tl-lane">${vc}`
-      + (anyMark ? '' : `<span class="tl-empty">no timings — range-synced / no block</span>`)
-      + `</div></div></div>`);
-  }
-  wrap.innerHTML = frag.join('');
-  $('tlempty').hidden = rows.length > 0;
-  lastSlots = new Set(rows.map(r => r.slot + ':' + r.validator_index));
-  $('validators').innerHTML = 'validator <b>' + [...validators].join(', ') + '</b>';
-  $('count').textContent = rows.length + ' rows';
-}
-
 async function refresh() {
-  if (activeTab !== 'live' && activeTab !== 'timeline') return;
+  if (activeTab !== 'live') return;
   if (inFlight) return;          // previous poll still running — skip this tick
   inFlight = true;
   try {
@@ -964,7 +775,7 @@ async function refresh() {
     const data = await res.json();
     if (data.error) throw new Error(data.error);
     liveRows = data.rows;
-    (activeTab === 'timeline' ? renderTimeline : renderRows)(liveRows);
+    renderRows(liveRows);
     $('live').className = 'live'; $('livetext').textContent = 'LIVE';
     $('updated').textContent = 'last update ' + new Date().toISOString().slice(11, 19) + ' utc';
   } catch (e) {
@@ -979,15 +790,11 @@ async function refresh() {
 function setTab(tab) {
   activeTab = tab;
   $('liveTab').className = tab === 'live' ? 'tab active' : 'tab';
-  $('timelineTab').className = tab === 'timeline' ? 'tab active' : 'tab';
   $('datadogTab').className = tab === 'datadog' ? 'tab active' : 'tab';
   $('csvPanel').className = tab === 'datadog' ? 'csvbar' : 'csvbar hidden';
-  // table vs timeline containers
-  $('timelinewrap').className = tab === 'timeline' ? '' : 'hidden';
-  document.querySelector('.tablewrap').style.display = tab === 'timeline' ? 'none' : '';
   lastSlots = new Set();
-  if (tab === 'live' || tab === 'timeline') {
-    (tab === 'timeline' ? renderTimeline : renderRows)(liveRows);
+  if (tab === 'live') {
+    renderRows(liveRows);
     $('live').className = paused ? 'live stale' : 'live';
     $('livetext').textContent = paused ? 'PAUSED' : 'LIVE';
     $('next').textContent = paused ? 'paused' : 'next refresh ' + Math.max(0, Math.ceil((timerEnd - Date.now()) / 1000)) + 's';
@@ -1048,7 +855,6 @@ $('pause').onclick = () => {
   if (!paused) refresh();
 };
 $('liveTab').onclick = () => setTab('live');
-$('timelineTab').onclick = () => setTab('timeline');
 $('datadogTab').onclick = () => setTab('datadog');
 $('epochs').onchange = refresh;
 $('epochFilter').onchange = refresh;

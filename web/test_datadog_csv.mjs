@@ -39,6 +39,15 @@ test('detectDatadogMapping recognizes common Datadog export headers', () => {
   assert.equal(mapping.status, 'Status');
 });
 
+test('detectDatadogMapping recognizes the real Datadog CSV contract', () => {
+  const mapping = detectDatadogMapping(['Date', 'Host', 'Service', 'Content']);
+
+  assert.equal(mapping.timestamp, 'Date');
+  assert.equal(mapping.message, 'Content');
+  assert.equal(mapping.source, 'Service');
+  assert.equal(mapping.host, 'Host');
+});
+
 test('parseDatadogCsv maps Lighthouse logs into diagnostics-shaped rows', () => {
   const csv = [
     '@timestamp,Message,Service',
@@ -84,4 +93,73 @@ test('parseDatadogCsv counts unsupported rows without failing import', () => {
   assert.equal(result.stats.parsedEvents, 0);
   assert.equal(result.stats.ignoredRows, 1);
   assert.deepEqual(result.rows, []);
+});
+
+test('parseDatadogCsv maps real Datadog beacon rows from Date Service Content', () => {
+  const csv = [
+    'Date,Host,Service,Content',
+    '2026-07-29T04:56:54.349Z,redacted-host,eth-staking,"INFO Synced peers: ""200"", finalized_epoch: 112207, epoch: 112207, block: ""0xabcd"", slot: 3590634"',
+    '2026-07-29T04:56:37.339Z,redacted-host,eth-staking,"INFO New block received slot: 3590633, root: 0x1234abcd"',
+  ].join('\n');
+
+  const result = parseDatadogCsv(csv);
+
+  assert.equal(result.stats.totalRows, 2);
+  assert.equal(result.stats.parsedEvents, 2);
+  assert.equal(result.rows.length, 2);
+
+  const synced = result.rows.find(r => r.slot === 3590634);
+  assert.equal(synced.peers, 200);
+  assert.equal(synced.sync_state, 'Synced');
+  assert.equal(synced.head_slot_at_tick, null);
+
+  const block = result.rows.find(r => r.slot === 3590633);
+  assert.equal(block.block_seen_ms, 1339);
+  assert.equal(block.block_root, '0x1234abcd');
+  assert.equal(block.fault_attribution, 'log_preview');
+});
+
+test('parseDatadogCsv maps validator failures and publish rows by inferred slot', () => {
+  const csv = [
+    'Date,Host,Service,Content',
+    '2026-07-29T05:18:38.619Z,redacted-host,eth-staking-validator,"Successfully published attestations validators: [""12345"",""23456""]"',
+    '2026-07-29T05:18:50.203Z,redacted-host,eth-staking-validator,"Failed to attest based on head event validators: [""12345""]"',
+  ].join('\n');
+
+  const result = parseDatadogCsv(csv);
+
+  assert.equal(result.stats.parsedEvents, 2);
+  assert.equal(result.rows.length, 2);
+
+  const published = result.rows.find(r => r.slot === 3590743);
+  assert.equal(published.validator_index, 12345);
+  assert.equal(published.att_start_ms, 2619);
+  assert.equal(published.total_attestation_lifecycle_ms, 2619);
+  assert.equal(published.fault_attribution, 'log_preview');
+
+  const failed = result.rows.find(r => r.slot === 3590744);
+  assert.equal(failed.validator_index, 12345);
+  assert.equal(failed.att_failures, 1);
+  assert.equal(failed.att_fail_reason, 'Failed to attest based on head event');
+  assert.equal(failed.fault_attribution, 'vc_head_event_failed');
+});
+
+test('parseDatadogCsv maps signer pubkey and signer latency', () => {
+  const csv = [
+    'Date,Host,Service,Content',
+    '2026-07-29T05:18:50.203Z,redacted-host,eth-staking-validator,"{""RequestPath"":""/api/v1/eth2/sign/0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"",""duration"":54}"',
+    '2026-07-29T05:19:02.203Z,redacted-host,eth-staking-validator,"{""RequestPath"":""/api/v1/eth2/sign/0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"",""servicetime"":""77""}"',
+  ].join('\n');
+
+  const result = parseDatadogCsv(csv);
+
+  assert.equal(result.stats.parsedEvents, 2);
+  const first = result.rows.find(r => r.validator_pubkey.startsWith('0xbb'));
+  assert.equal(first.slot, 3590744);
+  assert.equal(first.att_start_ms, 2203);
+  assert.equal(first.vc_publish_dur_ms, 54);
+  assert.equal(first.bottleneck, 'vc_publish');
+
+  const second = result.rows.find(r => r.validator_pubkey.startsWith('0xcc'));
+  assert.equal(second.vc_publish_dur_ms, 77);
 });

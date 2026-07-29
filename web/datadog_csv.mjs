@@ -114,6 +114,11 @@ function slotStartMs(slot) {
   return (GENESIS_UNIX_SECONDS + slot * SLOT_SECONDS) * 1000;
 }
 
+function slotFromTimestamp(tsMs) {
+  if (!Number.isFinite(tsMs)) return null;
+  return Math.floor((tsMs / 1000 - GENESIS_UNIX_SECONDS) / SLOT_SECONDS);
+}
+
 function offsetMs(tsMs, slot) {
   if (!Number.isFinite(tsMs) || slot === null || slot === undefined) return null;
   return Math.round(tsMs - slotStartMs(slot));
@@ -121,8 +126,26 @@ function offsetMs(tsMs, slot) {
 
 function classifySource(source, message) {
   const s = `${source || ''} ${message || ''}`.toLowerCase();
-  if (s.includes('validator') || s.includes('vc')) return 'validator';
+  if (s.includes('eth-staking-validator') || s.includes('validator') || s.includes('vc')) return 'validator';
   return 'beacon';
+}
+
+function extractValidatorIndex(raw) {
+  const validators = raw.match(/validators:\s*\[([^\]]+)\]/);
+  if (validators) {
+    const first = validators[1].match(/"?(\d{5,})"?/);
+    if (first) return Number(first[1]);
+  }
+  const direct = raw.match(/validator(?:_index)?:\s*"?(\d{5,})"?/);
+  return direct ? Number(direct[1]) : null;
+}
+
+function extractSignerLatency(raw) {
+  const duration = raw.match(/"duration"\s*:\s*"?(\d+)"?/);
+  if (duration) return Number(duration[1]);
+  const serviceTime = raw.match(/"servicetime"\s*:\s*"?(\d+)"?/);
+  if (serviceTime) return Number(serviceTime[1]);
+  return null;
 }
 
 function parseLogEvent(record, mapping) {
@@ -140,11 +163,13 @@ function parseLogEvent(record, mapping) {
     raw: message,
   };
 
-  const pubkey = extract(message, /(?:voting_pubkey: "?|pubkey: )(0x[0-9a-fA-F]{96})"?/);
+  const pubkey = extract(message, /(?:voting_pubkey: "?|pubkey: |\/api\/v1\/eth2\/sign\/)(0x[0-9a-fA-F]+)"?/);
   if (pubkey) {
     event.validator_pubkey = pubkey.toLowerCase();
     event.validator_name = event.validator_pubkey;
   }
+  const validatorIndex = extractValidatorIndex(message);
+  if (validatorIndex !== null) event.validator_index = validatorIndex;
 
   if (message.includes('Slot timer')) {
     event.event = 'slot_timer';
@@ -153,6 +178,11 @@ function parseLogEvent(record, mapping) {
     event.current_slot = extractInt(message, /current_slot: (\d+)/);
     event.sync_state = extract(message, /sync_state: (.+)$/) || '';
     event.slot = event.current_slot ?? event.slot;
+  } else if (/^INFO Synced\b/.test(message) || message.includes('INFO Synced peers:')) {
+    event.event = 'slot_timer';
+    event.peers = extractInt(message, /Synced peers:\s*"?(\d+)"?/);
+    event.current_slot = event.slot;
+    event.sync_state = 'Synced';
   } else if (message.includes('Successfully verified gossip block')) {
     event.event = 'gossip_verified';
   } else if (message.includes('New block received')) {
@@ -218,10 +248,21 @@ function parseLogEvent(record, mapping) {
     event.count = extractInt(message, /count: (\d+)/);
     event.committee_index = extractInt(message, /committee_index: (\d+)/);
     event.detail = message.slice(0, 220);
+  } else if (message.includes('Successfully published attestations')) {
+    event.event = 'att_published';
+    event.detail = message.slice(0, 220);
   } else if (message.includes('Failed to spawn attestation tasks') ||
-             message.includes('Failed to produce attestation data')) {
+             message.includes('Failed to produce attestation data') ||
+             message.includes('Failed to attest based on head event') ||
+             message.includes('Previous epoch attestation(s) failed to match head')) {
     event.event = 'att_failed';
-    event.detail = message.slice(0, 300);
+    event.detail = message.includes('Failed to attest based on head event')
+      ? 'Failed to attest based on head event'
+      : message.slice(0, 300);
+  } else if (message.includes('/api/v1/eth2/sign/')) {
+    event.event = 'signer_latency';
+    event.signer_latency_ms = extractSignerLatency(message);
+    event.detail = message.slice(0, 220);
   } else if (message.includes('Computed attestation selection proofs')) {
     event.event = 'selection_proofs';
     event.detail = message.slice(0, 220);
@@ -229,15 +270,19 @@ function parseLogEvent(record, mapping) {
     return null;
   }
 
+  if (event.slot === null || event.slot === undefined) {
+    event.slot = slotFromTimestamp(event.tsMs);
+    event.slot_inferred = event.slot !== null;
+  }
   return event.slot === null || event.slot === undefined ? null : event;
 }
 
-function emptyDiagnosticRow(slot, pubkey = '') {
+function emptyDiagnosticRow(slot, pubkey = '', validatorIndex = null) {
   return {
     epoch: null,
     slot,
     slot_start_utc: new Date(slotStartMs(slot)).toISOString().replace('.000Z', ''),
-    validator_index: null,
+    validator_index: validatorIndex,
     validator_pubkey: pubkey,
     validator_name: pubkey,
     committee_index: null,
@@ -246,6 +291,7 @@ function emptyDiagnosticRow(slot, pubkey = '') {
     attested_target_root: null,
     attested_source_root: null,
     canonical_head_root: null,
+    block_root: '',
     head_correct: null,
     target_correct: null,
     source_correct: null,
@@ -333,19 +379,42 @@ function buildDiagnosticRows(events) {
   const rows = [];
   for (const [slot, slotEvents] of bySlot) {
     slotEvents.sort((a, b) => a.tsMs - b.tsMs);
-    const pubkeys = [...new Set(slotEvents.map(e => e.validator_pubkey).filter(Boolean))];
-    const rowPubkeys = pubkeys.length ? pubkeys : [''];
-    for (const pubkey of rowPubkeys) {
-      const scopedEvents = slotEvents.filter(e => !e.validator_pubkey || !pubkey || e.validator_pubkey === pubkey);
-      const row = emptyDiagnosticRow(slot, pubkey);
+    const identities = new Map();
+    for (const event of slotEvents) {
+      if (event.validator_pubkey) {
+        identities.set(`pubkey:${event.validator_pubkey}`, {
+          pubkey: event.validator_pubkey,
+          validatorIndex: event.validator_index ?? null,
+        });
+      } else if (event.validator_index !== undefined && event.validator_index !== null) {
+        identities.set(`index:${event.validator_index}`, {
+          pubkey: '',
+          validatorIndex: event.validator_index,
+        });
+      }
+    }
+    const rowIdentities = identities.size ? [...identities.values()] : [{ pubkey: '', validatorIndex: null }];
+    for (const identity of rowIdentities) {
+      const pubkey = identity.pubkey;
+      const validatorIndex = identity.validatorIndex;
+      const scopedEvents = slotEvents.filter(e => {
+        if (e.validator_pubkey) return pubkey && e.validator_pubkey === pubkey;
+        if (e.validator_index !== undefined && e.validator_index !== null) {
+          return validatorIndex !== null && e.validator_index === validatorIndex;
+        }
+        return true;
+      });
+      const row = emptyDiagnosticRow(slot, pubkey, validatorIndex);
 
       const delayed = scopedEvents.filter(e => e.event === 'delayed_head').at(-1);
       const slotTimer = scopedEvents.filter(e => e.event === 'slot_timer').at(-1);
       const attStart = scopedEvents.find(e => e.event === 'att_start' && (!pubkey || e.validator_pubkey === pubkey));
       const attPublished = scopedEvents.find(e => e.event === 'att_published' && (!pubkey || e.validator_pubkey === pubkey));
       const attFailed = scopedEvents.find(e => e.event === 'att_failed' && (!pubkey || e.validator_pubkey === pubkey));
+      const signerLatency = scopedEvents.find(e => e.event === 'signer_latency' && (!pubkey || e.validator_pubkey === pubkey));
 
       row.block_seen_ms = delayed?.observed_delay_ms ?? minOffset(scopedEvents, ['gossip_verified', 'new_block']);
+      row.block_root = scopedEvents.map(e => e.block_root).find(Boolean) || '';
       row.gossip_late_by_ms = maxEventValue(scopedEvents, 'gossip_late', 'delay_s');
       if (row.gossip_late_by_ms !== null) row.gossip_late_by_ms = Math.round(row.gossip_late_by_ms * 1000);
       row.gossip_blob_arrival_ms = minOffset(scopedEvents, ['gossip_blob_verified']);
@@ -390,12 +459,26 @@ function buildDiagnosticRows(events) {
       if (attPublished) {
         row.committee_index = attPublished.committee_index ?? null;
         row.total_attestation_lifecycle_ms = offsetMs(attPublished.tsMs, slot);
+        if (row.att_start_ms === null) row.att_start_ms = row.total_attestation_lifecycle_ms;
+      }
+      if (signerLatency) {
+        row.att_start_ms = row.att_start_ms ?? offsetMs(signerLatency.tsMs, slot);
+        row.vc_publish_dur_ms = signerLatency.signer_latency_ms ?? null;
       }
       if (row.att_start_ms !== null && row.total_attestation_lifecycle_ms !== null) {
-        row.vc_publish_dur_ms = row.total_attestation_lifecycle_ms - row.att_start_ms;
+        row.vc_publish_dur_ms = row.vc_publish_dur_ms ?? row.total_attestation_lifecycle_ms - row.att_start_ms;
       }
-      row.agg_published_ms = minOffset(scopedEvents.filter(e => !pubkey || e.validator_pubkey === pubkey), ['agg_published']);
-      row.att_failures = scopedEvents.filter(e => e.event === 'att_failed' && (!pubkey || e.validator_pubkey === pubkey)).length;
+      row.agg_published_ms = minOffset(scopedEvents.filter(e => {
+        if (e.validator_pubkey) return !pubkey || e.validator_pubkey === pubkey;
+        if (e.validator_index !== undefined && e.validator_index !== null) return validatorIndex === null || e.validator_index === validatorIndex;
+        return true;
+      }), ['agg_published']);
+      row.att_failures = scopedEvents.filter(e => {
+        if (e.event !== 'att_failed') return false;
+        if (e.validator_pubkey) return !pubkey || e.validator_pubkey === pubkey;
+        if (e.validator_index !== undefined && e.validator_index !== null) return validatorIndex === null || e.validator_index === validatorIndex;
+        return true;
+      }).length;
       row.att_fail_reason = attFailed?.detail || '';
 
       const hasGossip = (row.blobs_from_gossip ?? 0) > 0;
@@ -409,6 +492,9 @@ function buildDiagnosticRows(events) {
         ['vc_publish', row.vc_publish_dur_ms],
       ].filter(([, value]) => value !== null && Number.isFinite(value));
       row.bottleneck = stages.length ? stages.sort((a, b) => b[1] - a[1])[0][0] : null;
+      if (row.att_fail_reason === 'Failed to attest based on head event') {
+        row.fault_attribution = 'vc_head_event_failed';
+      }
 
       rows.push(row);
     }
