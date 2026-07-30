@@ -127,7 +127,8 @@ class ValidatorDiscoveryTest(unittest.TestCase):
 
         with patch.object(indexer, "ch_json", return_value={"data": rows}), \
              patch.object(indexer, "beacon_get", return_value=resolved), \
-             patch.object(indexer, "upsert_local_validators") as upsert:
+             patch.object(indexer, "upsert_local_validators") as upsert, \
+             patch.object(indexer, "load_cached_validators", return_value={}):
             validators = indexer.get_monitored_validators()
 
         self.assertEqual(
@@ -138,6 +139,33 @@ class ValidatorDiscoveryTest(unittest.TestCase):
             },
         )
         upsert.assert_called_once_with(validators)
+
+    def test_falls_back_to_cached_validators_when_log_discovery_is_empty(self):
+        cached = {
+            11: {"pubkey": "0xabc", "name": "0xabc"},
+            12: {"pubkey": "0xdef", "name": "validator-def"},
+        }
+
+        with patch.object(indexer, "discover_validator_log_identities", return_value={}), \
+             patch.object(indexer, "upsert_local_validators") as upsert, \
+             patch.object(indexer, "load_cached_validators", return_value=cached):
+            validators = indexer.get_monitored_validators()
+
+        self.assertEqual(validators, cached)
+        upsert.assert_not_called()
+
+    def test_fresh_log_discovery_overrides_stale_cache_for_same_validator(self):
+        rows = [{"validator_pubkey": "0xabc", "validator_name": "renamed"}]
+        resolved = {"data": [{"index": "11", "validator": {"pubkey": "0xabc"}}]}
+        cached = {11: {"pubkey": "0xabc", "name": "0xabc"}}
+
+        with patch.object(indexer, "ch_json", return_value={"data": rows}), \
+             patch.object(indexer, "beacon_get", return_value=resolved), \
+             patch.object(indexer, "upsert_local_validators"), \
+             patch.object(indexer, "load_cached_validators", return_value=cached):
+            validators = indexer.get_monitored_validators()
+
+        self.assertEqual(validators, {11: {"pubkey": "0xabc", "name": "renamed"}})
 
     def test_get_validator_by_index_resolves_pubkey_and_name(self):
         response = {

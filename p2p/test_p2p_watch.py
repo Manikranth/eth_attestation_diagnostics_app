@@ -26,7 +26,8 @@ class ValidatorDiscoveryTest(unittest.TestCase):
 
         with patch.object(p2p_watch, "ch_json", return_value={"data": rows}), \
              patch.object(p2p_watch, "beacon_get", return_value=resolved), \
-             patch.object(p2p_watch, "upsert_local_validators") as upsert:
+             patch.object(p2p_watch, "upsert_local_validators") as upsert, \
+             patch.object(p2p_watch, "load_cached_validators", return_value={}):
             validators = p2p_watch.get_monitored_validators()
 
         self.assertEqual(
@@ -37,6 +38,33 @@ class ValidatorDiscoveryTest(unittest.TestCase):
             },
         )
         upsert.assert_called_once_with(validators)
+
+    def test_falls_back_to_cached_validators_when_log_discovery_is_empty(self):
+        cached = {
+            101: {"pubkey": "0xabc", "name": "0xabc"},
+            202: {"pubkey": "0xdef", "name": "validator-def"},
+        }
+
+        with patch.object(p2p_watch, "discover_validator_log_identities", return_value={}), \
+             patch.object(p2p_watch, "upsert_local_validators") as upsert, \
+             patch.object(p2p_watch, "load_cached_validators", return_value=cached):
+            validators = p2p_watch.get_monitored_validators()
+
+        self.assertEqual(validators, cached)
+        upsert.assert_not_called()
+
+    def test_fresh_log_discovery_overrides_stale_cache_for_same_validator(self):
+        rows = [{"validator_pubkey": "0xabc", "validator_name": "renamed"}]
+        resolved = {"data": [{"index": "101", "validator": {"pubkey": "0xabc"}}]}
+        cached = {101: {"pubkey": "0xabc", "name": "0xabc"}}
+
+        with patch.object(p2p_watch, "ch_json", return_value={"data": rows}), \
+             patch.object(p2p_watch, "beacon_get", return_value=resolved), \
+             patch.object(p2p_watch, "upsert_local_validators"), \
+             patch.object(p2p_watch, "load_cached_validators", return_value=cached):
+            validators = p2p_watch.get_monitored_validators()
+
+        self.assertEqual(validators, {101: {"pubkey": "0xabc", "name": "renamed"}})
 
     def test_duties_refresh_uses_discovered_validator_indices(self):
         p2p_watch.MONITORED_VALIDATORS = {

@@ -237,17 +237,46 @@ def upsert_local_validators(validators):
     )
 
 
+def load_cached_validators():
+    rows = ch_json(
+        """
+        SELECT
+            validator_index,
+            argMax(validator_pubkey, last_seen) AS validator_pubkey,
+            argMax(validator_name, last_seen) AS validator_name
+        FROM attmon.local_validators
+        GROUP BY validator_index
+        FORMAT JSON
+        """
+    )["data"]
+    return {
+        int(row["validator_index"]): {
+            "pubkey": row["validator_pubkey"],
+            "name": row["validator_name"],
+        }
+        for row in rows
+    }
+
+
 def get_monitored_validators():
     log_identities = discover_validator_log_identities()
-    if not log_identities:
-        return {}
+    validators = {}
+    if log_identities:
+        resolved = resolve_validator_indices(log_identities.keys())
+        validators = {
+            index: {"pubkey": pubkey, "name": log_identities[pubkey]}
+            for pubkey, index in resolved.items()
+        }
+        upsert_local_validators(validators)
 
-    resolved = resolve_validator_indices(log_identities.keys())
-    validators = {
-        index: {"pubkey": pubkey, "name": log_identities[pubkey]}
-        for pubkey, index in resolved.items()
-    }
-    upsert_local_validators(validators)
+    # Live discovery can go quiet (debug logs off, VC log rotated past its
+    # one-time "Enabled validator" line, Vector lagging) without those
+    # validators having stopped existing on-chain. Once a validator has been
+    # discovered at least once it stays monitored from this cache, so chain
+    # indexing never stalls just because the logs became unreadable.
+    for index, info in load_cached_validators().items():
+        validators.setdefault(index, info)
+
     return validators
 
 

@@ -19,7 +19,12 @@ ClickHouse views:
 Monitored validators are discovered from Lighthouse validator-client logs.
 Vector stores local validator pubkeys from lines such as `Enabled validator`
 and the indexer resolves those pubkeys to validator indices through the beacon
-API before writing per-validator diagnostics.
+API before writing per-validator diagnostics. Once a validator is discovered
+this way it is cached in `attmon.local_validators`, so the indexer and p2p
+watcher keep polling the beacon API for it on every subsequent slot even if
+the logs later go quiet (debug logging disabled, the VC log rotated past its
+one-time `Enabled validator` line, etc.) — chain-derived diagnostics never
+depend on the logs staying readable, only on having seen the validator once.
 
 ## How to run this
 
@@ -185,6 +190,14 @@ line), VC attestation production start / publish / failure reason.
 
 If the log ever goes missing, these are the relevant Lighthouse flags:
 `--logfile-debug-level debug --logfile-max-size 200 --logfile-max-number 5`.
+
+Losing this log only blanks the Lighthouse-log-sourced fields (the block/VC
+timing columns above, `peers`, `sync_state`) — Information fields sourced
+from the chain indexer (epoch/slot, block facts, head/target/source votes,
+inclusion) and Aggregation/Propagation fields sourced from the chain indexer
+and p2p watcher (`agg bits`, `subnet`, `picked`, `propag`) keep populating
+regardless, as long as each monitored validator was discovered from the logs
+at least once (see `attmon.local_validators` note above).
 
 ### Prometheus metrics — needs one flag change
 The beacon node currently runs **without** metrics. To light up the
