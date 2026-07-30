@@ -31,6 +31,8 @@ REEVAL_EPOCHS = int(os.environ.get("REEVAL_EPOCHS", "6"))
 # the node was syncing) and re-judge them once the node is trusted (self-heal).
 REEVAL_NULL_LOOKBACK = int(os.environ.get("REEVAL_NULL_LOOKBACK", "64"))
 POLL_SECONDS = int(os.environ.get("POLL_SECONDS", "60"))
+TARGET_SLOT = os.environ.get("TARGET_SLOT", "").strip()
+TARGET_VALIDATOR_INDEX = os.environ.get("TARGET_VALIDATOR_INDEX", "").strip()
 
 SLOTS_PER_EPOCH = 32
 SECONDS_PER_SLOT = 12
@@ -192,6 +194,16 @@ def resolve_validator_indices(pubkeys):
         item["validator"]["pubkey"]: int(item["index"])
         for item in data
     }
+
+
+def get_validator_by_index(validator_index):
+    data = beacon_get(f"/eth/v1/beacon/states/head/validators?id={validator_index}")["data"]
+    if not data:
+        raise RuntimeError(f"validator {validator_index} not found")
+    item = data[0]
+    idx = int(item["index"])
+    pubkey = item["validator"]["pubkey"]
+    return {idx: {"pubkey": pubkey, "name": pubkey}}
 
 
 def upsert_local_validators(validators):
@@ -644,6 +656,33 @@ def process_epoch(epoch, genesis_time, validators, trustworthy=True):
     return len(rows)
 
 
+def duty_slot_for_validator(epoch, validator_index):
+    committees = get_committees(epoch)
+    for slot, comms in committees.items():
+        for committee_validators in comms.values():
+            if validator_index in committee_validators:
+                return slot
+    return None
+
+
+def process_slot_for_validator(slot, validator_index, genesis_time):
+    epoch = slot // SLOTS_PER_EPOCH
+    target_epoch = get_target_epoch()
+    if epoch > target_epoch:
+        raise RuntimeError(
+            f"epoch {epoch} for slot {slot} is not finalized for attestation verdicts yet; newest judgeable epoch is {target_epoch}"
+        )
+    validators = get_validator_by_index(validator_index)
+    duty_slot = duty_slot_for_validator(epoch, validator_index)
+    if duty_slot != slot:
+        raise RuntimeError(
+            f"validator {validator_index} duty slot in epoch {epoch} is {duty_slot}, not requested slot {slot}"
+        )
+    upsert_local_validators(validators)
+    trustworthy = not node_is_optimistic()
+    return process_epoch(epoch, genesis_time, validators, trustworthy)
+
+
 def last_processed_epoch(validators):
     if not validators:
         return None
@@ -674,6 +713,15 @@ def main():
     ensure_schema()
     log.info("starting: beacon=%s backfill=%s epochs", BEACON_URL, BACKFILL_EPOCHS)
     genesis_time = get_genesis_time()
+
+    if TARGET_SLOT or TARGET_VALIDATOR_INDEX:
+        if not TARGET_SLOT or not TARGET_VALIDATOR_INDEX:
+            raise RuntimeError("TARGET_SLOT and TARGET_VALIDATOR_INDEX must be set together")
+        slot = int(TARGET_SLOT)
+        validator_index = int(TARGET_VALIDATOR_INDEX)
+        count = process_slot_for_validator(slot, validator_index, genesis_time)
+        log.info("targeted reprocess wrote %s row(s) for validator %s slot %s", count, validator_index, slot)
+        return
 
     while True:
         try:

@@ -139,6 +139,66 @@ class ValidatorDiscoveryTest(unittest.TestCase):
         )
         upsert.assert_called_once_with(validators)
 
+    def test_get_validator_by_index_resolves_pubkey_and_name(self):
+        response = {
+            "data": [
+                {
+                    "index": "1454766",
+                    "validator": {"pubkey": "0xabc"},
+                }
+            ]
+        }
+
+        with patch.object(indexer, "beacon_get", return_value=response):
+            validator = indexer.get_validator_by_index(1454766)
+
+        self.assertEqual(
+            validator,
+            {1454766: {"pubkey": "0xabc", "name": "0xabc"}},
+        )
+
+    def test_process_slot_for_validator_reprocesses_only_matching_duty_slot(self):
+        validators = {1454766: {"pubkey": "0xabc", "name": "0xabc"}}
+        committees = {
+            3597599: {7: [1454766, 44]},
+            3597600: {8: [55, 66]},
+        }
+
+        with patch.object(indexer, "get_validator_by_index", return_value=validators), \
+             patch.object(indexer, "get_target_epoch", return_value=112424), \
+             patch.object(indexer, "get_committees", return_value=committees), \
+             patch.object(indexer, "upsert_local_validators") as upsert, \
+             patch.object(indexer, "node_is_optimistic", return_value=False), \
+             patch.object(indexer, "process_epoch", return_value=1) as process_epoch:
+            count = indexer.process_slot_for_validator(3597599, 1454766, genesis_time=0)
+
+        self.assertEqual(count, 1)
+        upsert.assert_called_once_with(validators)
+        process_epoch.assert_called_once_with(112424, 0, validators, True)
+
+    def test_process_slot_for_validator_rejects_unfinalized_inclusion_window(self):
+        with patch.object(indexer, "get_target_epoch", return_value=112423), \
+             patch.object(indexer, "get_validator_by_index") as get_validator:
+            with self.assertRaisesRegex(RuntimeError, "not finalized"):
+                indexer.process_slot_for_validator(3597599, 1454766, genesis_time=0)
+
+        get_validator.assert_not_called()
+
+    def test_process_slot_for_validator_rejects_non_matching_duty_slot(self):
+        validators = {1454766: {"pubkey": "0xabc", "name": "0xabc"}}
+        committees = {
+            3597600: {7: [1454766, 44]},
+        }
+
+        with patch.object(indexer, "get_validator_by_index", return_value=validators), \
+             patch.object(indexer, "get_target_epoch", return_value=112424), \
+             patch.object(indexer, "get_committees", return_value=committees), \
+             patch.object(indexer, "process_epoch") as process_epoch:
+            with self.assertRaisesRegex(RuntimeError, "duty slot"):
+                indexer.process_slot_for_validator(3597599, 1454766, genesis_time=0)
+
+        process_epoch.assert_not_called()
+
     def test_process_epoch_uses_discovered_validator_set_only(self):
         validators = {
             22: {"pubkey": "0x22", "name": "validator-22"},

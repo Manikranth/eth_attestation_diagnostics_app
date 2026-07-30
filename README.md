@@ -32,6 +32,9 @@ docker compose up -d --build
 # 2. Watch the indexer backfill (takes a couple of minutes per epoch)
 docker compose logs -f indexer
 
+# Reprocess one exact validator duty slot, bypassing log discovery
+TARGET_SLOT=3597599 TARGET_VALIDATOR_INDEX=1454766 docker compose run --rm indexer
+
 # 3. Open the live dashboard in your browser
 open http://localhost:8080
 #    - one flat row per duty slot, EVERY step as a column, newest first
@@ -55,6 +58,24 @@ docker compose run --rm app --json /tmp/out.json
 
 ClickHouse is on `localhost:8123` (user/pass `attmon`/`attmon`),
 Prometheus UI on `localhost:9090`.
+
+For a one-shot historical repair, set both `TARGET_SLOT` and
+`TARGET_VALIDATOR_INDEX`. The indexer resolves that validator from the beacon
+API, verifies the validator was assigned to that exact duty slot, reprocesses
+that finalized epoch for only that validator, writes the row to ClickHouse, and
+then exits. If Docker Desktop cannot mount the validator log directory, run the
+built image directly with a reachable beacon URL:
+
+```bash
+docker run --rm --network eth_default \
+  -e BEACON_URL=http://host.docker.internal:5052 \
+  -e CLICKHOUSE_URL=http://attmon-clickhouse:8123 \
+  -e CLICKHOUSE_USER=attmon \
+  -e CLICKHOUSE_PASSWORD=attmon \
+  -e TARGET_SLOT=3597599 \
+  -e TARGET_VALIDATOR_INDEX=1454766 \
+  eth-indexer
+```
 
 ## Runbook: reading the UI
 
