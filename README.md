@@ -85,7 +85,7 @@ gaps intended to be compared or summed.
 | `slot start utc` | chain indexer | UTC wall-clock start of the duty slot. |
 | `validator` | chain indexer | Validator index resolved from local Lighthouse validator logs. |
 | `name` | chain indexer / logs | Validator name when known, otherwise pubkey-derived identity. |
-| `on chain` | beacon API | Whether a block exists at the duty slot. |
+| `slot block` | beacon API | Whether a block exists at the duty slot. This is not attestation inclusion. |
 | `proposer` | beacon API | Validator index that proposed the duty-slot block. |
 | `exec block#` | beacon API | Execution-layer block number for the duty-slot block. |
 | `current head#` | Lighthouse logs + beacon API | Execution-layer block number for the beacon node's `head@tick` slot. Blank when the slot-timer head cannot be mapped to an indexed block. |
@@ -99,6 +99,7 @@ gaps intended to be compared or summed.
 | `tgt` | finalized beacon rewards API | Whether the validator received the finalized target-vote reward for the epoch. |
 | `src` | finalized beacon rewards API | Whether the validator received the finalized source-vote reward for the epoch. |
 | `head lag` | chain indexer | Duty slot minus the slot of the block root you attested to. `0` is ideal. |
+| `att on chain` | chain indexer | Whether the attestation was found inside an aggregate included in a canonical block. |
 | `incl slot` | chain indexer | Slot where the attestation was included on chain. |
 | `dist` | chain indexer | Inclusion distance: `incl slot - duty slot`. `1` is ideal. |
 | `missed` | chain indexer | `YES` when the attestation never appeared on chain. |
@@ -130,7 +131,7 @@ gaps intended to be compared or summed.
 | `broadcast` | validator logs | Offset when the attestation was published to gossip; the end-to-end local lifecycle number. |
 | `fails` | validator logs | Count of validator-client attestation production failures for that slot. |
 | `fail reason` | validator logs | Failure detail when production failed. |
-| `in agg` | chain indexer | Whether the attestation was included in an on-chain aggregate. |
+| `in agg` | chain indexer | Same chain inclusion signal repeated in the aggregation section. |
 | `picked` | p2p watcher | Whether the local p2p watcher saw an aggregator pick up the vote. |
 | `agg bits` | chain indexer | Participants in the aggregate that carried this vote, shown as `set/committee_size`. |
 | `agg pub` | Lighthouse logs | Offset when our node published an aggregate; blank when this validator was not aggregating. |

@@ -419,12 +419,12 @@
     <div class="lg">
       <h4 class="info">INFORMATION — what happened</h4>
       <dl>
-        <dt>on chain</dt><dd>did a block actually land at your duty slot</dd>
+        <dt>slot block</dt><dd>did a block actually land at your duty slot. This is block availability, not whether your attestation was included.</dd>
         <dt>exec block# / current head#</dt><dd>the duty-slot block's execution number, and the execution block corresponding to the node's head at the slot tick.</dd>
         <dt>block size / blob size</dt><dd>serialized beacon block bytes, and total blob-sidecar payload bytes for that duty-slot block.</dd>
         <dt>head lag</dt><dd>how many slots behind your duty slot the block you voted for was. 0 is ideal.</dd>
         <dt>head / tgt / src</dt><dd>were your head, target and source votes correct. <b>–</b> means unknown — the node was still syncing, so we don't guess (this is the fix for the old false ✓).</dd>
-        <dt>incl slot / dist</dt><dd>which slot included your vote, and how far after your duty slot that was (1 = ideal).</dd>
+        <dt>att on chain / incl slot / dist</dt><dd>whether your vote was found in an on-chain aggregate, which slot included it, and how far after your duty slot that was (1 = ideal).</dd>
         <dt>missed</dt><dd>your attestation never made it on chain.</dd>
         <dt>head@tick / behind / sync</dt><dd>your node's health at the slot: its head slot, how far behind, and sync state.</dd>
       </dl>
@@ -476,7 +476,7 @@
   <table>
     <thead>
       <tr class="sections">
-        <th colspan="23" class="info">INFORMATION</th>
+        <th colspan="24" class="info">INFORMATION</th>
         <th colspan="17" title="every sub-step of the attestation pipeline, in the ACTUAL order it happened. Each timing cell shows TWO numbers: offset into the 12s slot window, then (how long that step took). Tagged BN=beacon node, EL=execution layer, VC=validator client">ATTESTATION · sequential pipeline</th>
         <th colspan="9" class="agg" title="aggregation of your vote: did an aggregator pick it up, committee, how big, when, peers">AGGREGATION</th>
         <th colspan="3" class="prop" title="how your vote propagated on gossip: time to hit the wire, which subnet">PROPAGATION</th>
@@ -486,7 +486,7 @@
         <th colspan="5">CHAIN</th>
         <th colspan="9" class="groupedge">BLOCK @ DUTY SLOT</th>
         <th colspan="3" class="groupedge">VOTES</th>
-        <th colspan="3" class="groupedge">INCLUSION</th>
+        <th colspan="4" class="groupedge">INCLUSION</th>
         <th colspan="3" class="groupedge">NODE</th>
         <th colspan="2" class="groupedge" title="block received on our beacon node">RECEIVE · BN</th>
         <th class="groupedge" title="total time the node spent PROCESSING the block = consensus + EL verify + import + set-as-head. Node CPU/disk time, excludes network &amp; blob wait. The four components are broken out under VERIFY + IMPORT.">BLOCK PROC · BN</th>
@@ -500,14 +500,15 @@
       <tr class="cols">
         <!-- INFORMATION -->
         <th>epoch</th><th>slot</th><th>slot window</th><th>validator</th><th>name</th>
-        <th class="groupedge">on chain</th><th>proposer</th><th>exec block#</th>
+        <th class="groupedge">slot block</th><th>proposer</th><th>exec block#</th>
         <th title="Execution block for the beacon-node head slot at the local slot tick">current head#</th>
         <th title="how many slots behind the duty slot your attested head was (0 = ideal)">head lag</th>
         <th>blobs</th><th title="serialized beacon block bytes">block size</th><th title="total blob sidecar payload bytes">blob size</th><th>graffiti</th>
         <th class="groupedge" title="did you vote for the correct head block? – = unknown while node syncing">head</th>
         <th title="correct target checkpoint?">tgt</th>
         <th title="correct source checkpoint?">src</th>
-        <th class="groupedge" title="slot your attestation was included in">incl slot</th>
+        <th class="groupedge" title="was your attestation found inside an on-chain aggregate">att on chain</th>
+        <th title="slot your attestation was included in">incl slot</th>
         <th title="inclusion distance: incl slot − duty slot (1 = ideal)">dist</th>
         <th title="attestation never made it on chain">missed</th>
         <th class="groupedge" title="node head slot at the slot tick">head@tick</th>
@@ -579,7 +580,7 @@ const FIELD_OPTIONS = [
   ['fault_attribution', 'fault'],
   ['validator_index', 'validator'],
   ['validator_name', 'name'],
-  ['block_on_chain', 'on chain'],
+  ['block_on_chain', 'slot block'],
   ['proposer_index', 'proposer'],
   ['exec_block_number', 'exec block#'],
   ['current_head_exec_block', 'current head#'],
@@ -591,6 +592,7 @@ const FIELD_OPTIONS = [
   ['head_correct', 'head'],
   ['target_correct', 'tgt'],
   ['source_correct', 'src'],
+  ['included_in_aggregate', 'att on chain'],
   ['inclusion_slot', 'incl slot'],
   ['inclusion_distance', 'dist'],
   ['missed', 'missed'],
@@ -608,7 +610,6 @@ const FIELD_OPTIONS = [
   ['att_failures', 'VC fails'],
   ['att_fail_reason', 'VC fail reasons'],
   ['bottleneck', 'bottleneck'],
-  ['included_in_aggregate', 'in agg'],
   ['aggregator_picked', 'picked'],
   ['committee_index', 'cmts'],
   ['committee_position', 'pos'],
@@ -627,7 +628,7 @@ const COLUMN_HELP = {
   'slot window': 'UTC start time for the 12 second duty slot.',
   'validator': 'Validator index resolved from the local validator logs.',
   'name': 'Validator name when known; otherwise the pubkey-derived identity.',
-  'on chain': 'Whether a block exists at this duty slot.',
+  'slot block': 'Whether a block exists at this duty slot. This can be no while att on chain is yes, because attestations are normally included in a later block.',
   'proposer': 'Validator index that proposed the duty-slot block.',
   'exec block#': 'Execution-layer block number inside the duty-slot block.',
   'current head#': 'Execution block number for the beacon-node head slot at the local slot timer tick. Derived from head@tick, not from a later indexer poll.',
@@ -639,6 +640,7 @@ const COLUMN_HELP = {
   'head': 'Whether your attested head root matched the canonical head for the duty slot. Dash means unknown while syncing.',
   'tgt': 'Whether your target checkpoint vote was correct.',
   'src': 'Whether your source checkpoint vote was correct.',
+  'att on chain': 'Whether your attestation was found inside an aggregate included in a canonical block.',
   'incl slot': 'Slot where your attestation was included on chain.',
   'dist': 'Inclusion distance: inclusion slot minus duty slot. 1 is ideal.',
   'missed': 'YES means the attestation was not found on chain.',
@@ -797,7 +799,8 @@ function renderRows(rows) {
       boolCell(r.head_correct, false, true) +
       boolCell(r.target_correct) + boolCell(r.source_correct) +
       // INCLUSION
-      numCell(r.inclusion_slot, true) +
+      boolCell(r.included_in_aggregate, false, true) +
+      numCell(r.inclusion_slot) +
       numCell(dist, false, dist === null ? '' : dist === 1 ? 'ok' : 'warn') +
       boolCell(r.missed, true) +
       // NODE
