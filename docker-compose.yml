@@ -67,7 +67,7 @@ services:
       POLL_SECONDS: ${POLL_SECONDS:-60}
       VC_LOG_PATH: /var/log/lighthouse-vc/validator.log
     volumes:
-      - ${VC_LOG_DIR:-/Volumes/geth/hoodi_node/lighthouse/hoodi/validators/logs}:/var/log/lighthouse-vc:ro
+      - ${VC_LOG_DIR:-/root/hoodi_node/lighthouse/hoodi/validators/logs}:/var/log/lighthouse-vc:ro
     depends_on:
       clickhouse:
         condition: service_healthy
@@ -84,8 +84,8 @@ services:
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-attmon}
     volumes:
       - ./vector/vector.yaml:/etc/vector/vector.yaml:ro
-      - ${LIGHTHOUSE_LOG_DIR:-/Volumes/geth/hoodi_node/lighthouse/hoodi/beacon/logs}:/var/log/lighthouse:ro
-      - ${VC_LOG_DIR:-/Volumes/geth/hoodi_node/lighthouse/hoodi/validators/logs}:/var/log/lighthouse-vc:ro
+      - ${LIGHTHOUSE_LOG_DIR:-/root/hoodi_node/lighthouse/hoodi/beacon/logs}:/var/log/lighthouse:ro
+      - ${VC_LOG_DIR:-/root/hoodi_node/lighthouse/hoodi/validators/logs}:/var/log/lighthouse-vc:ro
       - vector_data:/var/lib/vector
     depends_on:
       clickhouse:
@@ -104,7 +104,7 @@ services:
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-attmon}
       VC_LOG_PATH: /var/log/lighthouse-vc/validator.log
     volumes:
-      - ${VC_LOG_DIR:-/Volumes/geth/hoodi_node/lighthouse/hoodi/validators/logs}:/var/log/lighthouse-vc:ro
+      - ${VC_LOG_DIR:-/root/hoodi_node/lighthouse/hoodi/validators/logs}:/var/log/lighthouse-vc:ro
     depends_on:
       clickhouse:
         condition: service_healthy
