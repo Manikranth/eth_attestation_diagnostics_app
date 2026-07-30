@@ -1033,24 +1033,30 @@ function chunkSlotRange(minSlot, maxSlot, size) {
 // let an identity-less CSV row pick up an arbitrary validator's data before.
 async function fetchChainDataForCsv(stats) {
   if (stats.minSlot === null || stats.maxSlot === null) return [];
-  const idParam = stats.validatorPubkeys.length ? 'pubkeys'
-    : stats.validatorIndices.length ? 'validators'
-    : null;
-  if (!idParam) return []; // no validator identity anywhere in the CSV -> nothing to look up
-  const idValues = idParam === 'pubkeys' ? stats.validatorPubkeys : stats.validatorIndices;
+  // A single CSV mixes rows identified only by index (already-resolved VC
+  // events) with rows identified only by pubkey (pre-resolution lines like
+  // "Enabled validator"/"Validator without index"). Querying just one of the
+  // two id spaces silently drops every row identified the other way from the
+  // lookup — so query both whenever both are present, not either/or.
+  const lookups = [];
+  if (stats.validatorIndices.length) lookups.push(['validators', stats.validatorIndices]);
+  if (stats.validatorPubkeys.length) lookups.push(['pubkeys', stats.validatorPubkeys]);
+  if (!lookups.length) return []; // no validator identity anywhere in the CSV -> nothing to look up
 
   const rows = [];
   for (const [fromSlot, toSlot] of chunkSlotRange(stats.minSlot, stats.maxSlot, 8000)) {
-    for (const ids of chunkArray(idValues, 200)) {
-      const params = new URLSearchParams();
-      params.set('from_slot', fromSlot);
-      params.set('to_slot', toSlot);
-      params.set(idParam, ids.join(','));
-      const res = await fetch('/api/diagnostics?' + params.toString());
-      if (!res.ok) throw new Error('diagnostics HTTP ' + res.status);
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
-      rows.push(...data.rows);
+    for (const [idParam, idValues] of lookups) {
+      for (const ids of chunkArray(idValues, 200)) {
+        const params = new URLSearchParams();
+        params.set('from_slot', fromSlot);
+        params.set('to_slot', toSlot);
+        params.set(idParam, ids.join(','));
+        const res = await fetch('/api/diagnostics?' + params.toString());
+        if (!res.ok) throw new Error('diagnostics HTTP ' + res.status);
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+        rows.push(...data.rows);
+      }
     }
   }
   return rows;
