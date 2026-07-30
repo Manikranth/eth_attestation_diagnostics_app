@@ -67,6 +67,14 @@ def beacon_get_bytes(path, ok_404=False):
     return r.content
 
 
+def beacon_post(path, payload, ok_404=False):
+    r = session.post(f"{BEACON_URL}{path}", json=payload, timeout=60)
+    if r.status_code == 404 and ok_404:
+        return None
+    r.raise_for_status()
+    return r.json()
+
+
 def ch_query(query, data=None):
     r = requests.post(
         CLICKHOUSE_URL,
@@ -333,6 +341,38 @@ def get_block_attestations(slot):
     return resp["data"]
 
 
+def get_attestation_reward_verdicts(epoch, validators):
+    """Finalized reward-derived head/target/source vote verdicts by validator.
+
+    Beacon explorers report head/target/source voting using reward flags, not
+    just raw root equality. For example, a late attestation can have the right
+    head root but still receive no timely head reward. Values are 1 when the
+    corresponding reward component is positive, 0 otherwise.
+    """
+    if not validators:
+        return {}
+    try:
+        resp = beacon_post(
+            f"/eth/v1/beacon/rewards/attestations/{epoch}",
+            [str(v) for v in validators],
+            ok_404=True,
+        )
+    except Exception as e:
+        log.warning("attestation rewards fetch failed for epoch %s (%s)", epoch, e)
+        return {}
+    if resp is None or resp.get("execution_optimistic") or not resp.get("finalized"):
+        return {}
+    verdicts = {}
+    for row in resp.get("data", {}).get("total_rewards", []):
+        vidx = int(row["validator_index"])
+        verdicts[vidx] = {
+            "head_correct": int(int(row.get("head", 0)) > 0),
+            "target_correct": int(int(row.get("target", 0)) > 0),
+            "source_correct": int(int(row.get("source", 0)) > 0),
+        }
+    return verdicts
+
+
 def count_set_bits(hex_bits, is_bitlist=True):
     """Number of set bits in an SSZ hex bitfield (minus the bitlist length marker)."""
     raw = bytes.fromhex(hex_bits[2:] if hex_bits.startswith("0x") else hex_bits)
@@ -429,20 +469,6 @@ def canonical_root_at(slot, floor_slot=0):
     return ""
 
 
-def source_checkpoint_for_slot(slot):
-    """Expected source checkpoint for an attestation produced at `slot`.
-
-    This is read from the canonical state finality checkpoints instead of being
-    inferred from inclusion. Returns (epoch, root), or None if the historical
-    state is unavailable.
-    """
-    resp = beacon_get(f"/eth/v1/beacon/states/{slot}/finality_checkpoints", ok_404=True)
-    if resp is None:
-        return None
-    source = resp["data"]["current_justified"]
-    return int(source["epoch"]), source["root"]
-
-
 # --- Epoch processing -----------------------------------------------------
 
 def process_epoch(epoch, genesis_time, validators, trustworthy=True):
@@ -460,12 +486,11 @@ def process_epoch(epoch, genesis_time, validators, trustworthy=True):
         if vidx not in duties:
             log.warning("validator %s has no duty in epoch %s (unexpected)", vidx, epoch)
 
-    canonical_target = canonical_root_at(epoch * SLOTS_PER_EPOCH)
+    reward_verdicts = get_attestation_reward_verdicts(epoch, validator_indices)
 
     # Attestations for slot S may be included in any block up to the end of
     # epoch(S)+1 (EIP-7045). Fetch blocks lazily, cache per inclusion slot.
     block_cache = {}
-    source_checkpoint_cache = {}
 
     rows = []
     for vidx, (duty_slot, ci, pos) in duties.items():
@@ -512,31 +537,14 @@ def process_epoch(epoch, genesis_time, validators, trustworthy=True):
             incl_slot, att = found
             data = att["data"]
             attested_head_slot = slot_of_root(data["beacon_block_root"])
-            if duty_slot not in source_checkpoint_cache:
-                source_checkpoint_cache[duty_slot] = source_checkpoint_for_slot(duty_slot)
-            expected_source = source_checkpoint_cache[duty_slot]
+            verdict = reward_verdicts.get(vidx, {})
             row.update(
                 attested_head_root=data["beacon_block_root"],
                 attested_target_root=data["target"]["root"],
                 attested_source_root=data["source"]["root"],
-                # NULL (not 0) when the node is untrusted or canonical is
-                # unresolved: renders as "–" instead of a confident wrong verdict.
-                # Re-evaluated once the node is trusted (see main()).
-                head_correct=int(data["beacon_block_root"] == canonical_head)
-                if (trustworthy and canonical_head)
-                else None,
-                target_correct=int(
-                    int(data["target"]["epoch"]) == epoch
-                    and data["target"]["root"] == canonical_target
-                )
-                if (trustworthy and canonical_target)
-                else None,
-                source_correct=int(
-                    int(data["source"]["epoch"]) == expected_source[0]
-                    and data["source"]["root"] == expected_source[1]
-                )
-                if (trustworthy and expected_source)
-                else None,
+                head_correct=verdict.get("head_correct"),
+                target_correct=verdict.get("target_correct"),
+                source_correct=verdict.get("source_correct"),
                 # how many slots behind the duty slot the attested head was
                 head_lag_slots=(duty_slot - attested_head_slot)
                 if attested_head_slot is not None

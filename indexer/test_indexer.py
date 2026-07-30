@@ -167,7 +167,56 @@ class ValidatorDiscoveryTest(unittest.TestCase):
         with patch.object(indexer, "get_finalized_epoch", return_value=42):
             self.assertEqual(indexer.get_target_epoch(), 40)
 
-    def test_process_epoch_validates_source_against_finalized_state_checkpoint(self):
+    def test_attestation_reward_verdicts_parse_positive_reward_components(self):
+        rewards = {
+            "finalized": True,
+            "execution_optimistic": False,
+            "data": {
+                "total_rewards": [
+                    {
+                        "validator_index": "22",
+                        "head": "0",
+                        "target": "1234",
+                        "source": "5678",
+                    }
+                ]
+            },
+        }
+
+        with patch.object(indexer, "beacon_post", return_value=rewards):
+            verdicts = indexer.get_attestation_reward_verdicts(10, {22})
+
+        self.assertEqual(
+            verdicts,
+            {
+                22: {
+                    "head_correct": 0,
+                    "target_correct": 1,
+                    "source_correct": 1,
+                }
+            },
+        )
+
+    def test_attestation_reward_verdicts_require_finalized_response(self):
+        rewards = {
+            "finalized": False,
+            "execution_optimistic": False,
+            "data": {
+                "total_rewards": [
+                    {
+                        "validator_index": "22",
+                        "head": "1",
+                        "target": "1",
+                        "source": "1",
+                    }
+                ]
+            },
+        }
+
+        with patch.object(indexer, "beacon_post", return_value=rewards):
+            self.assertEqual(indexer.get_attestation_reward_verdicts(10, {22}), {})
+
+    def test_process_epoch_uses_finalized_rewards_for_vote_verdicts(self):
         validators = {
             22: {"pubkey": "0x22", "name": "validator-22"},
         }
@@ -184,21 +233,28 @@ class ValidatorDiscoveryTest(unittest.TestCase):
                 "source": {"epoch": "9", "root": "0xwrongsource"},
             },
         }
+        rewards = {
+            22: {
+                "head_correct": 0,
+                "target_correct": 1,
+                "source_correct": 1,
+            },
+        }
 
         with patch.object(indexer, "get_committees", return_value=committees), \
              patch.object(indexer, "canonical_root_at", side_effect=lambda slot, floor_slot=0: "0xtarget" if slot == 320 else "0xhead"), \
              patch.object(indexer, "get_block_attestations", return_value=[attestation]), \
              patch.object(indexer, "get_block_facts", return_value={}), \
              patch.object(indexer, "slot_of_root", return_value=321), \
-             patch.object(indexer, "source_checkpoint_for_slot", return_value=("9", "0xexpectedsource")), \
+             patch.object(indexer, "get_attestation_reward_verdicts", return_value=rewards), \
              patch.object(indexer, "ch_query") as ch_query:
             count = indexer.process_epoch(10, 0, validators)
 
         self.assertEqual(count, 1)
         row = json.loads(ch_query.call_args.kwargs["data"])
-        self.assertEqual(row["head_correct"], 1)
+        self.assertEqual(row["head_correct"], 0)
         self.assertEqual(row["target_correct"], 1)
-        self.assertEqual(row["source_correct"], 0)
+        self.assertEqual(row["source_correct"], 1)
 
     def test_process_epoch_does_not_store_batch_head_as_slot_head(self):
         validators = {
