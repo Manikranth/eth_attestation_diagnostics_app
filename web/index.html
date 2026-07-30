@@ -421,10 +421,11 @@
       <dl>
         <dt>slot block</dt><dd>did a block actually land at your duty slot. This is block availability, not whether your attestation was included.</dd>
         <dt>exec block# / current head#</dt><dd>the duty-slot block's execution number, and the execution block corresponding to the node's head at the slot tick.</dd>
+        <dt>duty root / voted head / canon head</dt><dd>the canonical block root at your duty slot, the head root your validator actually voted for, and the finalized canonical head root used for the verdict.</dd>
         <dt>block size / blob size</dt><dd>serialized beacon block bytes, and total blob-sidecar payload bytes for that duty-slot block.</dd>
         <dt>head lag</dt><dd>how many slots behind your duty slot the block you voted for was. 0 is ideal.</dd>
         <dt>head / tgt / src</dt><dd>were your head, target and source votes correct. <b>–</b> means unknown — the node was still syncing, so we don't guess (this is the fix for the old false ✓).</dd>
-        <dt>att on chain / incl slot / dist</dt><dd>whether your vote was found in an on-chain aggregate, which slot included it, and how far after your duty slot that was (1 = ideal).</dd>
+        <dt>att on chain / incl slot / incl root / incl exec# / dist</dt><dd>whether your vote was found in an on-chain aggregate, which canonical block included it, that block's execution number, and how far after your duty slot that was (1 = ideal).</dd>
         <dt>missed</dt><dd>your attestation never made it on chain.</dd>
         <dt>head@tick / behind / sync</dt><dd>your node's health at the slot: its head slot, how far behind, and sync state.</dd>
       </dl>
@@ -435,7 +436,7 @@
       <dl>
         <dt>Block available / Block arrival</dt><dd>when the block was fully available for attesting, and when it first arrived + was verified on gossip (with how late it was).</dd>
         <dt>block proc</dt><dd><b>how long the node actually spent processing the block</b> = consensus + EL verify + import-write + set-as-head (the four are broken out under VERIFY + IMPORT). Node CPU/disk time — <b>excludes</b> network propagation and blob wait. Over ~1s is slow. Blank for range-synced blocks (only logged at head). Lighthouse does not log a finer per-substep split; those exist only as fleet-aggregate Prometheus histograms.</dd>
-        <dt>blob src</dt><dd>where the blobs came from: <b>gossip</b>, <b>el</b> (getBlobs from execution), <b>gossip+el</b>, or <b>none</b>.</dd>
+        <dt>blob src</dt><dd>slot-level blob/data-column evidence: <b>gossip</b>, <b>el</b> (getBlobs from execution), <b>gossip+el</b> when both appear for the slot, or <b>none</b>.</dd>
         <dt>blob arrival / fetch·exp / cols / blob verify</dt><dd>first blob seen (offset), blobs served/expected by the EL, columns held via the EL, and when all data was verified + available.</dd>
         <dt>BN consensus / EL verify</dt><dd>the consensus and execution-layer verification durations — the two biggest components of <b>block proc</b>. Logged on every head block; blank only for range-synced blocks.</dd>
         <dt>block import / head import</dt><dd>block written into fork choice, then set as head (offset into slot, with the write / set-as-head durations).</dd>
@@ -476,7 +477,7 @@
   <table>
     <thead>
       <tr class="sections">
-        <th colspan="24" class="info">INFORMATION</th>
+        <th colspan="29" class="info">INFORMATION</th>
         <th colspan="17" title="every sub-step of the attestation pipeline, in the ACTUAL order it happened. Each timing cell shows TWO numbers: offset into the 12s slot window, then (how long that step took). Tagged BN=beacon node, EL=execution layer, VC=validator client">ATTESTATION · sequential pipeline</th>
         <th colspan="9" class="agg" title="aggregation of your vote: did an aggregator pick it up, committee, how big, when, peers">AGGREGATION</th>
         <th colspan="3" class="prop" title="how your vote propagated on gossip: time to hit the wire, which subnet">PROPAGATION</th>
@@ -484,9 +485,9 @@
       </tr>
       <tr class="groups">
         <th colspan="5">CHAIN</th>
-        <th colspan="9" class="groupedge">BLOCK @ DUTY SLOT</th>
-        <th colspan="3" class="groupedge">VOTES</th>
-        <th colspan="4" class="groupedge">INCLUSION</th>
+        <th colspan="10" class="groupedge">BLOCK @ DUTY SLOT</th>
+        <th colspan="5" class="groupedge">VOTES</th>
+        <th colspan="6" class="groupedge">INCLUSION</th>
         <th colspan="3" class="groupedge">NODE</th>
         <th colspan="2" class="groupedge" title="block received on our beacon node">RECEIVE · BN</th>
         <th class="groupedge" title="total time the node spent PROCESSING the block = consensus + EL verify + import + set-as-head. Node CPU/disk time, excludes network &amp; blob wait. The four components are broken out under VERIFY + IMPORT.">BLOCK PROC · BN</th>
@@ -501,14 +502,19 @@
         <!-- INFORMATION -->
         <th>epoch</th><th>slot</th><th>slot window</th><th>validator</th><th>name</th>
         <th class="groupedge">slot block</th><th>proposer</th><th>exec block#</th>
+        <th title="canonical beacon block root at the duty slot">duty root</th>
         <th title="Execution block for the beacon-node head slot at the local slot tick">current head#</th>
         <th title="how many slots behind the duty slot your attested head was (0 = ideal)">head lag</th>
         <th>blobs</th><th title="serialized beacon block bytes">block size</th><th title="total blob sidecar payload bytes">blob size</th><th>graffiti</th>
         <th class="groupedge" title="did you vote for the correct head block? – = unknown while node syncing">head</th>
         <th title="correct target checkpoint?">tgt</th>
         <th title="correct source checkpoint?">src</th>
+        <th title="beacon block root your validator attested as head">voted head</th>
+        <th title="canonical head root for the duty slot">canon head</th>
         <th class="groupedge" title="was your attestation found inside an on-chain aggregate">att on chain</th>
         <th title="slot your attestation was included in">incl slot</th>
+        <th title="beacon block root that included the aggregate containing your vote">incl root</th>
+        <th title="execution block number of the inclusion block">incl exec#</th>
         <th title="inclusion distance: incl slot − duty slot (1 = ideal)">dist</th>
         <th title="attestation never made it on chain">missed</th>
         <th class="groupedge" title="node head slot at the slot tick">head@tick</th>
@@ -583,6 +589,7 @@ const FIELD_OPTIONS = [
   ['block_on_chain', 'slot block'],
   ['proposer_index', 'proposer'],
   ['exec_block_number', 'exec block#'],
+  ['duty_block_root', 'duty root'],
   ['current_head_exec_block', 'current head#'],
   ['head_lag_slots', 'head lag'],
   ['blob_count', 'blobs'],
@@ -592,8 +599,12 @@ const FIELD_OPTIONS = [
   ['head_correct', 'head'],
   ['target_correct', 'tgt'],
   ['source_correct', 'src'],
+  ['attested_head_root', 'voted head'],
+  ['canonical_head_root', 'canon head'],
   ['included_in_aggregate', 'att on chain'],
   ['inclusion_slot', 'incl slot'],
+  ['inclusion_block_root', 'incl root'],
+  ['inclusion_exec_block_number', 'incl exec#'],
   ['inclusion_distance', 'dist'],
   ['missed', 'missed'],
   ['head_slot_at_tick', 'head@tick'],
@@ -631,6 +642,7 @@ const COLUMN_HELP = {
   'slot block': 'Whether a block exists at this duty slot. This can be no while att on chain is yes, because attestations are normally included in a later block.',
   'proposer': 'Validator index that proposed the duty-slot block.',
   'exec block#': 'Execution-layer block number inside the duty-slot block.',
+  'duty root': 'Canonical beacon block root at the duty slot. This is the block at your attestation slot, not necessarily the head root you voted for.',
   'current head#': 'Execution block number for the beacon-node head slot at the local slot timer tick. Derived from head@tick, not from a later indexer poll.',
   'head lag': 'Duty slot minus the block slot you voted as head. 0 is ideal; higher means you attested to an older head.',
   'blobs': 'Number of blob KZG commitments in the duty-slot block.',
@@ -640,8 +652,12 @@ const COLUMN_HELP = {
   'head': 'Whether your attested head root matched the canonical head for the duty slot. Dash means unknown while syncing.',
   'tgt': 'Whether your target checkpoint vote was correct.',
   'src': 'Whether your source checkpoint vote was correct.',
+  'voted head': 'Beacon block root your validator put in attestation.data.beacon_block_root. This is the actual head block you voted for.',
+  'canon head': 'Canonical beacon head root for the duty slot after the inclusion window is finalized. Compare this with voted head.',
   'att on chain': 'Whether your attestation was found inside an aggregate included in a canonical block.',
   'incl slot': 'Slot where your attestation was included on chain.',
+  'incl root': 'Canonical beacon block root of the block that included the aggregate containing your vote.',
+  'incl exec#': 'Execution-layer block number inside the inclusion block.',
   'dist': 'Inclusion distance: inclusion slot minus duty slot. 1 is ideal.',
   'missed': 'YES means the attestation was not found on chain.',
   'head@tick': 'Beacon-node head slot at the local slot timer tick.',
@@ -650,7 +666,7 @@ const COLUMN_HELP = {
   'Block available': 'When the block became fully available for attesting. Shown as offset into slot with duration in parentheses.',
   'Block arrival': 'When the block was first seen and verified on gossip. Parentheses show how late Lighthouse judged it.',
   'block proc': 'Total time the node spent PROCESSING this block = consensus + EL verify + import-write + set-as-head (the four components broken out under VERIFY + IMPORT). This is node CPU/disk time and EXCLUDES network propagation and blob wait (see Block arrival / Block available). Over ~1s is slow. Only logged on the On-time/Delayed head block lines, so it is blank for range-synced blocks. Lighthouse does not log a finer per-substep split (decode / fork choice / DB) on any line — those exist only as aggregate Prometheus histograms.',
-  'blob src': 'Where blob/data-column data came from: gossip, el, gossip+el, none, or blank when unknown.',
+  'blob src': 'Slot-level Lighthouse evidence for blob/data-column availability. gossip+el means this slot had both gossip-arrival evidence and EL/getBlobs evidence; it does not mean one blob came from both sources.',
   'blob arrival': 'Offset when the first blob/data-column arrived via gossip.',
   'blob fetch/exp': 'Blobs fetched from the execution layer as fetched/expected. Example: 3/3 means all expected blobs came from the EL.',
   'cols': 'Data columns already available through the execution-layer path.',
@@ -792,15 +808,20 @@ function renderRows(rows) {
       // BLOCK @ DUTY SLOT
       boolCell(r.block_on_chain, false, true) +
       numCell(r.proposer_index) + numCell(r.exec_block_number) +
+      txtCell(r.duty_block_root, false, 12) +
       numCell(r.current_head_exec_block) +
       numCell(headLag, false, headLag === null ? '' : headLag <= 1 ? 'ok' : 'warn') +
       numCell(r.blob_count) + bytesCell(r.block_size_bytes) + bytesCell(r.blob_size_bytes) + txtCell(r.graffiti) +
       // VOTES
       boolCell(r.head_correct, false, true) +
       boolCell(r.target_correct) + boolCell(r.source_correct) +
+      txtCell(r.attested_head_root, false, 12) +
+      txtCell(r.canonical_head_root, false, 12) +
       // INCLUSION
       boolCell(r.included_in_aggregate, false, true) +
       numCell(r.inclusion_slot) +
+      txtCell(r.inclusion_block_root, false, 12) +
+      numCell(r.inclusion_exec_block_number) +
       numCell(dist, false, dist === null ? '' : dist === 1 ? 'ok' : 'warn') +
       boolCell(r.missed, true) +
       // NODE

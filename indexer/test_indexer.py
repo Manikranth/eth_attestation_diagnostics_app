@@ -316,6 +316,56 @@ class ValidatorDiscoveryTest(unittest.TestCase):
         self.assertEqual(row["target_correct"], 1)
         self.assertEqual(row["source_correct"], 1)
 
+    def test_process_epoch_records_inclusion_block_identity(self):
+        validators = {
+            22: {"pubkey": "0x22", "name": "validator-22"},
+        }
+        committees = {
+            321: {7: [22, 44]},
+        }
+        attestation = {
+            "aggregation_bits": "0x03",
+            "data": {
+                "slot": "321",
+                "index": "7",
+                "beacon_block_root": "0xvotedhead",
+                "target": {"epoch": "10", "root": "0xtarget"},
+                "source": {"epoch": "9", "root": "0xsource"},
+            },
+        }
+
+        def block_facts(slot):
+            return {
+                321: {
+                    "block_on_chain": 1,
+                    "duty_block_root": "0xdutyblock",
+                    "exec_block_number": 1001,
+                },
+                322: {
+                    "block_on_chain": 1,
+                    "duty_block_root": "0xinclusionblock",
+                    "exec_block_number": 1002,
+                },
+            }[slot]
+
+        with patch.object(indexer, "get_committees", return_value=committees), \
+             patch.object(indexer, "canonical_root_at", return_value="0xvotedhead"), \
+             patch.object(indexer, "get_block_attestations", return_value=[attestation]), \
+             patch.object(indexer, "get_block_facts", side_effect=block_facts), \
+             patch.object(indexer, "slot_of_root", return_value=321), \
+             patch.object(indexer, "get_attestation_reward_verdicts", return_value={22: {"head_correct": 1, "target_correct": 1, "source_correct": 1}}), \
+             patch.object(indexer, "ch_query") as ch_query:
+            count = indexer.process_epoch(10, 0, validators)
+
+        self.assertEqual(count, 1)
+        row = json.loads(ch_query.call_args.kwargs["data"])
+        self.assertEqual(row["duty_block_root"], "0xdutyblock")
+        self.assertEqual(row["attested_head_root"], "0xvotedhead")
+        self.assertEqual(row["canonical_head_root"], "0xvotedhead")
+        self.assertEqual(row["inclusion_slot"], 322)
+        self.assertEqual(row["inclusion_block_root"], "0xinclusionblock")
+        self.assertEqual(row["inclusion_exec_block_number"], 1002)
+
     def test_process_epoch_falls_back_to_timely_flags_when_rewards_unavailable(self):
         validators = {
             22: {"pubkey": "0x22", "name": "validator-22"},

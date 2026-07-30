@@ -25,11 +25,14 @@ CREATE TABLE IF NOT EXISTS attmon.chain_attestations
     target_correct        Nullable(UInt8),
     source_correct        Nullable(UInt8),
     inclusion_slot        Nullable(UInt64),
+    inclusion_block_root  String DEFAULT '',    -- canonical beacon block root that included the aggregate
+    inclusion_exec_block_number Nullable(UInt64),
     inclusion_distance    Nullable(UInt64),
     included_in_aggregate UInt8,
     missed                UInt8,
     -- block facts for the duty slot (from beacon API)
     block_on_chain        Nullable(UInt8),      -- did a block land at the duty slot
+    duty_block_root       String DEFAULT '',    -- canonical beacon block root at the duty slot
     proposer_index        Nullable(UInt64),
     exec_block_number     Nullable(UInt64),     -- execution-layer block number of the duty-slot block
     current_head_exec_block Nullable(UInt64),   -- legacy nullable; diagnostics derives slot-time head from logs
@@ -59,6 +62,12 @@ ALTER TABLE attmon.chain_attestations
     ADD COLUMN IF NOT EXISTS block_size_bytes Nullable(UInt64);
 ALTER TABLE attmon.chain_attestations
     ADD COLUMN IF NOT EXISTS blob_size_bytes Nullable(UInt64);
+ALTER TABLE attmon.chain_attestations
+    ADD COLUMN IF NOT EXISTS duty_block_root String DEFAULT '';
+ALTER TABLE attmon.chain_attestations
+    ADD COLUMN IF NOT EXISTS inclusion_block_root String DEFAULT '';
+ALTER TABLE attmon.chain_attestations
+    ADD COLUMN IF NOT EXISTS inclusion_exec_block_number Nullable(UInt64);
 -- Existing volumes: convert the vote verdicts to Nullable in place so the
 -- indexer can write NULL "unknown-while-syncing" verdicts (see CREATE above).
 ALTER TABLE attmon.chain_attestations
@@ -300,11 +309,14 @@ SELECT
     c.target_correct        AS target_correct,
     c.source_correct        AS source_correct,
     c.inclusion_slot        AS inclusion_slot,
+    c.inclusion_block_root  AS inclusion_block_root,
+    c.inclusion_exec_block_number AS inclusion_exec_block_number,
     c.inclusion_distance    AS inclusion_distance,
     c.included_in_aggregate AS included_in_aggregate,
     c.missed                AS missed,
     -- block facts
     c.block_on_chain        AS block_on_chain,
+    c.duty_block_root       AS duty_block_root,
     c.proposer_index        AS proposer_index,
     c.exec_block_number     AS exec_block_number,
     h.head_exec_block       AS current_head_exec_block,

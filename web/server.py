@@ -31,9 +31,11 @@ CH_SETTINGS = {
 FIELD_FILTER_COLUMNS = {
     "epoch", "slot", "slot_start_utc", "validator_index", "validator_name",
     "validator_pubkey", "block_on_chain", "proposer_index",
-    "exec_block_number", "current_head_exec_block", "head_lag_slots",
+    "duty_block_root", "exec_block_number", "current_head_exec_block", "head_lag_slots",
     "blob_count", "block_size_bytes", "blob_size_bytes", "graffiti", "head_correct", "target_correct",
-    "source_correct", "inclusion_slot", "inclusion_distance", "missed",
+    "source_correct", "attested_head_root", "canonical_head_root",
+    "inclusion_slot", "inclusion_block_root", "inclusion_exec_block_number",
+    "inclusion_distance", "missed",
     "head_slot_at_tick", "node_behind_slots", "sync_state", "available_ms",
     "avail_dur_ms", "block_seen_ms", "gossip_late_by_ms", "proc_start_ms",
     "proc_decode_ms", "proc_state_ms", "proc_forkchoice_ms",

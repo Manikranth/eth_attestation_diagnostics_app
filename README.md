@@ -109,6 +109,7 @@ gaps intended to be compared or summed.
 | `slot block` | beacon API | Whether a block exists at the duty slot. This is not attestation inclusion. |
 | `proposer` | beacon API | Validator index that proposed the duty-slot block. |
 | `exec block#` | beacon API | Execution-layer block number for the duty-slot block. |
+| `duty root` | beacon API | Canonical beacon block root at the duty slot. This is the block at your slot, not necessarily the head root you voted for. |
 | `current head#` | Lighthouse logs + beacon API | Execution-layer block number for the beacon node's `head@tick` slot. Blank when the slot-timer head cannot be mapped to an indexed block. |
 | `blobs` | beacon API | Number of blob KZG commitments in the duty-slot block. |
 | `block size` | beacon API | Serialized SSZ byte size of the duty-slot beacon block. |
@@ -119,9 +120,13 @@ gaps intended to be compared or summed.
 | `head` | finalized beacon rewards API | Whether the validator received the finalized head-vote reward for the epoch. This includes timing, so a late attestation can miss head even if the attested root was canonical. |
 | `tgt` | finalized beacon rewards API | Whether the validator received the finalized target-vote reward for the epoch. |
 | `src` | finalized beacon rewards API | Whether the validator received the finalized source-vote reward for the epoch. |
+| `voted head` | chain indexer | `attestation.data.beacon_block_root`: the actual head block root your validator voted for. |
+| `canon head` | finalized beacon chain | Canonical head root for the duty slot after the inclusion window is finalized. Compare with `voted head`. |
 | `head lag` | chain indexer | Duty slot minus the slot of the block root you attested to. `0` is ideal. |
 | `att on chain` | chain indexer | Whether the attestation was found inside an aggregate included in a canonical block. |
 | `incl slot` | chain indexer | Slot where the attestation was included on chain. |
+| `incl root` | beacon API | Canonical beacon block root that included the aggregate containing your vote. |
+| `incl exec#` | beacon API | Execution-layer block number for the inclusion block. |
 | `dist` | chain indexer | Inclusion distance: `incl slot - duty slot`. `1` is ideal. |
 | `missed` | chain indexer | `YES` when the attestation never appeared on chain. |
 | `head@tick` | Lighthouse logs | Beacon node head slot at the local slot timer tick. |
@@ -129,7 +134,7 @@ gaps intended to be compared or summed.
 | `sync` | Lighthouse logs | Lighthouse sync state at the slot timer tick. |
 | `seen` | Lighthouse logs | Offset from slot start when the block was first seen and verified on gossip. |
 | `late by` | Lighthouse logs | Lighthouse's late-block delay duration, only present when Lighthouse logged a late block. |
-| `blob src` | Lighthouse logs / beacon API | Where blob/data columns came from: `gossip`, `el`, `gossip+el`, `none`, or blank if unknown. |
+| `blob src` | Lighthouse logs / beacon API | Slot-level blob/data-column evidence: `gossip`, `el`, `gossip+el`, `none`, or blank. `gossip+el` means both gossip-arrival and EL/getBlobs evidence appeared for the slot. |
 | `getBlobs req` | Lighthouse logs | Offset when the beacon node requested blobs from the execution layer. |
 | `blobs EL` | Lighthouse logs | Blobs fetched from execution layer as `fetched/expected`. |
 | `cols EL` | Lighthouse logs | Data columns already available through the execution-layer path. |

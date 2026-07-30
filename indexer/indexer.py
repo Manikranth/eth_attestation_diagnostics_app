@@ -127,6 +127,18 @@ def ensure_schema():
         "ADD COLUMN IF NOT EXISTS blob_size_bytes Nullable(UInt64)"
     )
     ch_query(
+        "ALTER TABLE attmon.chain_attestations "
+        "ADD COLUMN IF NOT EXISTS duty_block_root String DEFAULT ''"
+    )
+    ch_query(
+        "ALTER TABLE attmon.chain_attestations "
+        "ADD COLUMN IF NOT EXISTS inclusion_block_root String DEFAULT ''"
+    )
+    ch_query(
+        "ALTER TABLE attmon.chain_attestations "
+        "ADD COLUMN IF NOT EXISTS inclusion_exec_block_number Nullable(UInt64)"
+    )
+    ch_query(
         """
         CREATE TABLE IF NOT EXISTS attmon.local_validators
         (
@@ -450,6 +462,7 @@ def get_block_facts(slot):
     to the header endpoint."""
     facts = {
         "block_on_chain": 0,
+        "duty_block_root": "",
         "proposer_index": None,
         "exec_block_number": None,
         "exec_block_hash": "",
@@ -464,6 +477,7 @@ def get_block_facts(slot):
         return facts  # empty slot — no block proposed / none canonical
     msg = hdr["data"]["header"]["message"]
     facts["block_on_chain"] = 1
+    facts["duty_block_root"] = hdr["data"].get("root", "")
     facts["proposer_index"] = int(msg["proposer_index"])
     facts["state_root"] = msg["state_root"]
     try:
@@ -589,6 +603,7 @@ def process_epoch(epoch, genesis_time, validators, trustworthy=True):
         if found:
             incl_slot, att = found
             data = att["data"]
+            inclusion_facts = get_block_facts(incl_slot)
             inclusion_distance = incl_slot - duty_slot
             attested_head_slot = slot_of_root(data["beacon_block_root"])
             verdict = reward_verdicts.get(vidx)
@@ -618,6 +633,8 @@ def process_epoch(epoch, genesis_time, validators, trustworthy=True):
                 # participants in the aggregate that carried our vote
                 agg_bits_set=count_set_bits(att["aggregation_bits"]),
                 inclusion_slot=incl_slot,
+                inclusion_block_root=inclusion_facts.get("duty_block_root", ""),
+                inclusion_exec_block_number=inclusion_facts.get("exec_block_number"),
                 inclusion_distance=inclusion_distance,
                 included_in_aggregate=1,
                 missed=0,
@@ -631,6 +648,8 @@ def process_epoch(epoch, genesis_time, validators, trustworthy=True):
                 target_correct=0,
                 source_correct=0,
                 inclusion_slot=None,
+                inclusion_block_root="",
+                inclusion_exec_block_number=None,
                 inclusion_distance=None,
                 included_in_aggregate=0,
                 missed=1,
