@@ -214,35 +214,6 @@
   .chip.warn b { color: var(--warn); }
   .chip.bad b { color: var(--bad); }
 
-  .legend {
-    border-bottom: var(--border-w) solid var(--border); background: var(--bg-raise);
-    font-size: var(--fs-sm);
-  }
-  .legend > summary {
-    padding: var(--sp-3) var(--sp-5); cursor: pointer; color: var(--text-muted);
-    letter-spacing: .02em; list-style: none; user-select: none; font-weight: 600;
-  }
-  .legend > summary:hover { color: var(--accent); }
-  .legend[open] > summary { color: var(--accent); border-bottom: var(--border-w) solid var(--border); }
-  .legend-body {
-    padding: var(--sp-4) var(--sp-5) var(--sp-5);
-    display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-    gap: var(--sp-4) var(--sp-6); max-height: 46vh; overflow: auto;
-  }
-  .lg h4 {
-    font-family: var(--font-ui); font-size: var(--fs-xs); font-weight: 700;
-    letter-spacing: .08em; text-transform: uppercase; color: var(--accent); margin-bottom: .5em;
-    padding-bottom: .3em; border-bottom: var(--border-w) solid var(--border);
-  }
-  .lg h4.info, .lg h4.prop { color: var(--info); }
-  .lg h4.agg { color: var(--warn); }
-  .lg h4.verdict { color: var(--text-primary); }
-  .lg .note { color: var(--text-muted); margin-bottom: .6em; line-height: var(--lh-normal); }
-  .lg dl { display: grid; grid-template-columns: max-content 1fr; gap: .25em .8em; }
-  .lg dt { color: var(--text-primary); font-weight: 600; white-space: nowrap; }
-  .lg dd { color: var(--text-muted); line-height: 1.4; }
-  .lg b { color: var(--text-primary); font-weight: 600; }
-
   .tablewrap { flex: 1; overflow: auto; }
   table { border-collapse: collapse; min-width: 100%; white-space: nowrap; font-family: var(--font-mono); }
   thead th {
@@ -445,66 +416,6 @@
   </div>
   <iframe id="chartsFrame" class="chartspanel-frame" title="on-chain metric charts" loading="lazy"></iframe>
 </section>
-
-<details class="legend">
-  <summary>▸ what does each column mean? (plain-English legend)</summary>
-  <div class="legend-body">
-    <div class="lg">
-      <h4 class="info">INFORMATION — what happened</h4>
-      <dl>
-        <dt>slot block</dt><dd>did a block actually land at your duty slot. This is block availability, not whether your attestation was included.</dd>
-        <dt>exec block# / current head#</dt><dd>the duty-slot block's execution number, and the execution block corresponding to the node's head at the slot tick.</dd>
-        <dt>duty root / voted head / canon head</dt><dd>the canonical block root at your duty slot, the head root your validator actually voted for, and the finalized canonical head root used for the verdict.</dd>
-        <dt>block size / blob size</dt><dd>serialized beacon block bytes, and total blob-sidecar payload bytes for that duty-slot block.</dd>
-        <dt>head lag</dt><dd>how many slots behind your duty slot the block you voted for was. 0 is ideal.</dd>
-        <dt>head / tgt / src</dt><dd>were your head, target and source votes correct. <b>–</b> means unknown — the node was still syncing, so we don't guess (this is the fix for the old false ✓).</dd>
-        <dt>att on chain / incl slot / incl root / incl exec# / dist</dt><dd>whether your vote was found in an on-chain aggregate, which canonical block included it, that block's execution number, and how far after your duty slot that was (1 = ideal).</dd>
-        <dt>missed</dt><dd>your attestation never made it on chain.</dd>
-        <dt>head@tick / behind / sync</dt><dd>your node's health at the slot: its head slot, how far behind, and sync state.</dd>
-      </dl>
-    </div>
-    <div class="lg">
-      <h4>ATTESTATION — the pipeline, in the order it happened</h4>
-      <p class="note">Every timing column shows <b>two numbers</b>: <b>offset (duration)</b> — how far into the 12s slot window the step happened, then how long that step took. A <b>–</b> means that half isn't available. Tagged <b>BN</b> (beacon node), <b>EL</b> (execution layer) or <b>VC</b> (validator client). <b>BN consensus / EL verify / block import / head import</b> come from Lighthouse's On-time/Delayed head block breakdown (populated once the indexer + vector run against a synced node).</p>
-      <dl>
-        <dt>Block available / Block arrival</dt><dd>when the block was fully available for attesting, and when it first arrived + was verified on gossip (with how late it was).</dd>
-        <dt>block proc</dt><dd><b>how long the node actually spent processing the block</b> = consensus + EL verify + import-write + set-as-head (the four are broken out under VERIFY + IMPORT). Node CPU/disk time — <b>excludes</b> network propagation and blob wait. Over ~1s is slow. Blank for range-synced blocks (only logged at head). Lighthouse does not log a finer per-substep split; those exist only as fleet-aggregate Prometheus histograms.</dd>
-        <dt>blob src</dt><dd>slot-level blob/data-column evidence: <b>gossip</b>, <b>el</b> (getBlobs from execution), <b>gossip+el</b> when both appear for the slot, or <b>none</b>.</dd>
-        <dt>blob arrival / fetch·exp / cols / blob verify</dt><dd>first blob seen (offset), blobs served/expected by the EL, columns held via the EL, and when all data was verified + available.</dd>
-        <dt>BN consensus / EL verify</dt><dd>the consensus and execution-layer verification durations — the two biggest components of <b>block proc</b>. Logged on every head block; blank only for range-synced blocks.</dd>
-        <dt>block import / head import</dt><dd>block written into fork choice, then set as head (offset into slot, with the write / set-as-head durations).</dd>
-        <dt>VC att start / sign + pub</dt><dd>when the VC began producing, and how long produce+sign+publish took.</dd>
-        <dt>bottleneck</dt><dd>the slowest step this slot.</dd>
-      </dl>
-    </div>
-    <div class="lg">
-      <h4 class="agg">AGGREGATION — did an aggregator carry your vote</h4>
-      <dl>
-        <dt>block on subnet</dt><dd><b>–</b> — when the block/attestation first arrived on the gossip subnet needs a p2p sentry (deferred).</dd>
-        <dt>in agg / picked</dt><dd>your vote was included in an on-chain aggregate; and whether an aggregator picked it up on gossip (live p2p watcher).</dd>
-        <dt>cmts / pos</dt><dd>your committee index and position within that committee for this duty.</dd>
-        <dt>agg bits</dt><dd>how many validators were in the aggregate that carried your vote / committee size.</dd>
-        <dt>agg pub</dt><dd>when our node published its aggregate (only if this validator was an aggregator).</dd>
-        <dt>peer</dt><dd>node-wide peer count at the slot (a proxy — not a true per-aggregation count).</dd>
-        <dt>Δ blk</dt><dd><b>n/a</b> — the delta between the block the aggregator saw and the block you attested needs a p2p sentry (deferred to a later phase).</dd>
-      </dl>
-    </div>
-    <div class="lg">
-      <h4 class="prop">PROPAGATION — how your vote spread</h4>
-      <dl>
-        <dt>propag</dt><dd>time from slot start until your vote first hit the wire (live p2p watcher).</dd>
-        <dt>subnet</dt><dd>the gossip subnet your attestation was published on.</dd>
-        <dt>seen by</dt><dd><b>n/a</b> — which peer / remote attester first saw your vote needs a p2p sentry (deferred).</dd>
-      </dl>
-    </div>
-    <div class="lg">
-      <h4 class="verdict">VERDICT</h4>
-      <dl>
-        <dt>fault</dt><dd>one-word classification of how the slot went (perfect, included_late, wrong_head_vote, block_arrived_late, …) and, when missed, the most likely reason.</dd>
-      </dl>
-    </div>
-  </div>
-</details>
 
 <div class="tablewrap">
   <table>
