@@ -389,12 +389,17 @@ def source_checkpoint_for_slot(slot):
 
 
 def local_timely_vote_verdict(data, epoch, duty_slot, inclusion_distance, canonical_head, canonical_target, expected_source):
-    if not canonical_head or not canonical_target or not expected_source:
+    if not canonical_head or not canonical_target:
         return {}
-    source_matches = (
-        int(data["source"]["epoch"]) == expected_source[0]
-        and data["source"]["root"] == expected_source[1]
-    )
+    if expected_source:
+        source_matches = (
+            int(data["source"]["epoch"]) == expected_source[0]
+            and data["source"]["root"] == expected_source[1]
+        )
+    else:
+        # Fallback for clients that cannot serve old finality checkpoints:
+        # canonical inclusion means consensus accepted the source checkpoint.
+        source_matches = True
     target_matches = (
         source_matches
         and int(data["target"]["epoch"]) == epoch

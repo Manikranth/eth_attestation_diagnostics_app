@@ -316,6 +316,47 @@ class ValidatorDiscoveryTest(unittest.TestCase):
         self.assertEqual(row["target_correct"], 1)
         self.assertEqual(row["source_correct"], 1)
 
+    def test_process_epoch_fallback_does_not_dash_when_source_checkpoint_unavailable(self):
+        validators = {
+            22: {"pubkey": "0x22", "name": "validator-22"},
+        }
+        committees = {
+            321: {7: [22, 44]},
+        }
+        attestation = {
+            "aggregation_bits": "0x03",
+            "data": {
+                "slot": "321",
+                "index": "7",
+                "beacon_block_root": "0xhead",
+                "target": {"epoch": "10", "root": "0xtarget"},
+                "source": {"epoch": "9", "root": "0xsource"},
+            },
+        }
+
+        def canonical(slot, floor_slot=0):
+            return {
+                320: "0xtarget",
+                321: "0xhead",
+            }.get(slot, "")
+
+        with patch.object(indexer, "get_committees", return_value=committees), \
+             patch.object(indexer, "canonical_root_at", side_effect=canonical), \
+             patch.object(indexer, "get_block_attestations", side_effect=[None, [attestation]]), \
+             patch.object(indexer, "get_block_facts", return_value={}), \
+             patch.object(indexer, "slot_of_root", return_value=321), \
+             patch.object(indexer, "get_attestation_reward_verdicts", return_value={}), \
+             patch.object(indexer, "source_checkpoint_for_slot", return_value=None), \
+             patch.object(indexer, "ch_query") as ch_query:
+            count = indexer.process_epoch(10, 0, validators)
+
+        self.assertEqual(count, 1)
+        row = json.loads(ch_query.call_args.kwargs["data"])
+        self.assertEqual(row["inclusion_distance"], 2)
+        self.assertEqual(row["head_correct"], 0)
+        self.assertEqual(row["target_correct"], 1)
+        self.assertEqual(row["source_correct"], 1)
+
     def test_process_epoch_does_not_store_batch_head_as_slot_head(self):
         validators = {
             22: {"pubkey": "0x22", "name": "validator-22"},
