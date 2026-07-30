@@ -35,6 +35,9 @@ POLL_SECONDS = int(os.environ.get("POLL_SECONDS", "60"))
 SLOTS_PER_EPOCH = 32
 SECONDS_PER_SLOT = 12
 ATTESTATION_DEADLINE_MS = 4000
+TIMELY_SOURCE_INCLUSION_DISTANCE = 5
+TIMELY_TARGET_INCLUSION_DISTANCE = SLOTS_PER_EPOCH
+TIMELY_HEAD_INCLUSION_DISTANCE = 1
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", stream=sys.stdout
@@ -373,6 +376,38 @@ def get_attestation_reward_verdicts(epoch, validators):
     return verdicts
 
 
+def source_checkpoint_for_slot(slot):
+    """Expected source checkpoint for an attestation produced at `slot`.
+
+    Used as a local fallback when the beacon rewards endpoint is unavailable.
+    """
+    resp = beacon_get(f"/eth/v1/beacon/states/{slot}/finality_checkpoints", ok_404=True)
+    if resp is None:
+        return None
+    source = resp["data"]["current_justified"]
+    return int(source["epoch"]), source["root"]
+
+
+def local_timely_vote_verdict(data, epoch, duty_slot, inclusion_distance, canonical_head, canonical_target, expected_source):
+    if not canonical_head or not canonical_target or not expected_source:
+        return {}
+    source_matches = (
+        int(data["source"]["epoch"]) == expected_source[0]
+        and data["source"]["root"] == expected_source[1]
+    )
+    target_matches = (
+        source_matches
+        and int(data["target"]["epoch"]) == epoch
+        and data["target"]["root"] == canonical_target
+    )
+    head_matches = target_matches and data["beacon_block_root"] == canonical_head
+    return {
+        "source_correct": int(source_matches and inclusion_distance <= TIMELY_SOURCE_INCLUSION_DISTANCE),
+        "target_correct": int(target_matches and inclusion_distance <= TIMELY_TARGET_INCLUSION_DISTANCE),
+        "head_correct": int(head_matches and inclusion_distance <= TIMELY_HEAD_INCLUSION_DISTANCE),
+    }
+
+
 def count_set_bits(hex_bits, is_bitlist=True):
     """Number of set bits in an SSZ hex bitfield (minus the bitlist length marker)."""
     raw = bytes.fromhex(hex_bits[2:] if hex_bits.startswith("0x") else hex_bits)
@@ -491,6 +526,7 @@ def process_epoch(epoch, genesis_time, validators, trustworthy=True):
     # Attestations for slot S may be included in any block up to the end of
     # epoch(S)+1 (EIP-7045). Fetch blocks lazily, cache per inclusion slot.
     block_cache = {}
+    source_checkpoint_cache = {}
 
     rows = []
     for vidx, (duty_slot, ci, pos) in duties.items():
@@ -536,8 +572,21 @@ def process_epoch(epoch, genesis_time, validators, trustworthy=True):
         if found:
             incl_slot, att = found
             data = att["data"]
+            inclusion_distance = incl_slot - duty_slot
             attested_head_slot = slot_of_root(data["beacon_block_root"])
-            verdict = reward_verdicts.get(vidx, {})
+            verdict = reward_verdicts.get(vidx)
+            if verdict is None:
+                if duty_slot not in source_checkpoint_cache:
+                    source_checkpoint_cache[duty_slot] = source_checkpoint_for_slot(duty_slot)
+                verdict = local_timely_vote_verdict(
+                    data,
+                    epoch,
+                    duty_slot,
+                    inclusion_distance,
+                    canonical_head,
+                    canonical_root_at(epoch * SLOTS_PER_EPOCH),
+                    source_checkpoint_cache[duty_slot],
+                )
             row.update(
                 attested_head_root=data["beacon_block_root"],
                 attested_target_root=data["target"]["root"],
@@ -552,7 +601,7 @@ def process_epoch(epoch, genesis_time, validators, trustworthy=True):
                 # participants in the aggregate that carried our vote
                 agg_bits_set=count_set_bits(att["aggregation_bits"]),
                 inclusion_slot=incl_slot,
-                inclusion_distance=incl_slot - duty_slot,
+                inclusion_distance=inclusion_distance,
                 included_in_aggregate=1,
                 missed=0,
             )
