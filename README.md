@@ -19,7 +19,12 @@ ClickHouse views:
 Monitored validators are discovered from Lighthouse validator-client logs.
 Vector stores local validator pubkeys from lines such as `Enabled validator`
 and the indexer resolves those pubkeys to validator indices through the beacon
-API before writing per-validator diagnostics.
+API before writing per-validator diagnostics. Once a validator is discovered
+this way it is cached in `attmon.local_validators`, so the indexer and p2p
+watcher keep polling the beacon API for it on every subsequent slot even if
+the logs later go quiet (debug logging disabled, the VC log rotated past its
+one-time `Enabled validator` line, etc.) — chain-derived diagnostics never
+depend on the logs staying readable, only on having seen the validator once.
 
 ## How to run this
 
@@ -76,6 +81,41 @@ docker run --rm --network eth_default \
   -e TARGET_VALIDATOR_INDEX=1454766 \
   eth-indexer
 ```
+
+### Batch historical backfill (BACKFILL_PAIRS_FILE)
+The poll loop only ever re-judges a bounded window — `BACKFILL_EPOCHS` (default
+3) the first time a validator is discovered, `REEVAL_EPOCHS` (default 6) for
+reorg self-correction, and `REEVAL_NULL_LOOKBACK` (default 64, ~7.7 hours) for
+stuck NULL verdicts. Anything older than that (e.g. a Datadog CSV from a
+previous day) is never touched again automatically, even though the beacon
+node still has the history — it just needs a manual reprocess.
+
+For more than one `(slot, validator_index)` pair, set `BACKFILL_PAIRS_FILE` to
+a CSV/text file with one `slot,validator_index` pair per line (blank lines,
+`#` comments, and a header row are ignored) instead of setting
+`TARGET_SLOT`/`TARGET_VALIDATOR_INDEX` once per pair:
+
+```bash
+# pairs.csv:
+#   slot,validator_index
+#   3591199,1439433
+#   3591199,1439544
+BACKFILL_PAIRS_FILE=/data/pairs.csv docker compose run --rm indexer
+```
+
+The Datadog CSV tab's **export backfill pairs** button generates this file
+directly from whatever's currently loaded: it collects the distinct
+`(slot, validator_index)` pairs among rows the exact-match chain lookup could
+not enrich (skipping rows that only carry an unresolved pubkey, same as
+`TARGET_VALIDATOR_INDEX` requires a resolved index) and downloads them as
+`backfill_pairs.csv`, ready to hand to the command above. Each pair is
+reprocessed independently — one unfinalized, mismatched, or pruned-history
+pair is logged and skipped without aborting the rest of the batch.
+
+Propagation/aggregator-pickup fields (`propag`, `picked`) are sourced from the
+p2p watcher's live SSE subscription and can never be backfilled this way —
+there is no stored history of past gossip timing to replay (see "P2P layer"
+below).
 
 ## Runbook: reading the UI
 
@@ -185,6 +225,14 @@ line), VC attestation production start / publish / failure reason.
 
 If the log ever goes missing, these are the relevant Lighthouse flags:
 `--logfile-debug-level debug --logfile-max-size 200 --logfile-max-number 5`.
+
+Losing this log only blanks the Lighthouse-log-sourced fields (the block/VC
+timing columns above, `peers`, `sync_state`) — Information fields sourced
+from the chain indexer (epoch/slot, block facts, head/target/source votes,
+inclusion) and Aggregation/Propagation fields sourced from the chain indexer
+and p2p watcher (`agg bits`, `subnet`, `picked`, `propag`) keep populating
+regardless, as long as each monitored validator was discovered from the logs
+at least once (see `attmon.local_validators` note above).
 
 ### Prometheus metrics — needs one flag change
 The beacon node currently runs **without** metrics. To light up the

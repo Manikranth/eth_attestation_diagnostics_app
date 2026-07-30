@@ -127,7 +127,8 @@ class ValidatorDiscoveryTest(unittest.TestCase):
 
         with patch.object(indexer, "ch_json", return_value={"data": rows}), \
              patch.object(indexer, "beacon_get", return_value=resolved), \
-             patch.object(indexer, "upsert_local_validators") as upsert:
+             patch.object(indexer, "upsert_local_validators") as upsert, \
+             patch.object(indexer, "load_cached_validators", return_value={}):
             validators = indexer.get_monitored_validators()
 
         self.assertEqual(
@@ -138,6 +139,33 @@ class ValidatorDiscoveryTest(unittest.TestCase):
             },
         )
         upsert.assert_called_once_with(validators)
+
+    def test_falls_back_to_cached_validators_when_log_discovery_is_empty(self):
+        cached = {
+            11: {"pubkey": "0xabc", "name": "0xabc"},
+            12: {"pubkey": "0xdef", "name": "validator-def"},
+        }
+
+        with patch.object(indexer, "discover_validator_log_identities", return_value={}), \
+             patch.object(indexer, "upsert_local_validators") as upsert, \
+             patch.object(indexer, "load_cached_validators", return_value=cached):
+            validators = indexer.get_monitored_validators()
+
+        self.assertEqual(validators, cached)
+        upsert.assert_not_called()
+
+    def test_fresh_log_discovery_overrides_stale_cache_for_same_validator(self):
+        rows = [{"validator_pubkey": "0xabc", "validator_name": "renamed"}]
+        resolved = {"data": [{"index": "11", "validator": {"pubkey": "0xabc"}}]}
+        cached = {11: {"pubkey": "0xabc", "name": "0xabc"}}
+
+        with patch.object(indexer, "ch_json", return_value={"data": rows}), \
+             patch.object(indexer, "beacon_get", return_value=resolved), \
+             patch.object(indexer, "upsert_local_validators"), \
+             patch.object(indexer, "load_cached_validators", return_value=cached):
+            validators = indexer.get_monitored_validators()
+
+        self.assertEqual(validators, {11: {"pubkey": "0xabc", "name": "renamed"}})
 
     def test_get_validator_by_index_resolves_pubkey_and_name(self):
         response = {
@@ -198,6 +226,34 @@ class ValidatorDiscoveryTest(unittest.TestCase):
                 indexer.process_slot_for_validator(3597599, 1454766, genesis_time=0)
 
         process_epoch.assert_not_called()
+
+    def test_load_backfill_pairs_skips_header_comments_and_blank_lines(self):
+        content = (
+            "slot,validator_index\n"
+            "\n"
+            "# a comment\n"
+            "3597599,1454766\n"
+            "3597600,44\n"
+            "3597599,1454766\n"  # duplicate, dropped
+        )
+        with patch("builtins.open", mock_open(read_data=content)):
+            pairs = indexer.load_backfill_pairs("/tmp/pairs.csv")
+
+        self.assertEqual(pairs, [(3597599, 1454766), (3597600, 44)])
+
+    def test_run_backfill_pairs_continues_past_individual_failures(self):
+        pairs = [(3597599, 1454766), (3597600, 44), (3597601, 99)]
+
+        def fake_process(slot, validator_index, genesis_time):
+            if validator_index == 44:
+                raise RuntimeError("epoch not finalized yet")
+            return 1
+
+        with patch.object(indexer, "process_slot_for_validator", side_effect=fake_process):
+            succeeded, failed = indexer.run_backfill_pairs(pairs, genesis_time=0)
+
+        self.assertEqual(succeeded, 2)
+        self.assertEqual(failed, [(3597600, 44, "epoch not finalized yet")])
 
     def test_process_epoch_uses_discovered_validator_set_only(self):
         validators = {
