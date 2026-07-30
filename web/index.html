@@ -67,6 +67,12 @@
     --bad-soft: rgba(242,89,107,.10);
     --info-soft: rgba(79,195,224,.10);
 
+    --stage-avail:   #3987e5;
+    --stage-arrival: #199e70;
+    --stage-proc:    #9085e9;
+    --stage-import:  #c98500;
+    --stage-vc:      #d55181;
+
     --shadow-sm: 0 1px 2px rgba(0,0,0,.35);
     --shadow-md: 0 6px 20px rgba(0,0,0,.45);
   }
@@ -96,6 +102,12 @@
     --warn-soft: rgba(168,91,6,.08);
     --bad-soft: rgba(194,43,65,.08);
     --info-soft: rgba(13,116,144,.08);
+
+    --stage-avail:   #2a78d6;
+    --stage-arrival: #1baf7a;
+    --stage-proc:    #4a3aa7;
+    --stage-import:  #eda100;
+    --stage-vc:      #e87ba4;
 
     --shadow-sm: 0 1px 2px rgba(16,24,43,.06);
     --shadow-md: 0 8px 24px rgba(16,24,43,.10);
@@ -357,6 +369,60 @@
                            { color: var(--bad); background: var(--bad-soft); }
   .pill.unknown            { color: var(--text-muted); border-color: var(--border); }
 
+  .chartspanel {
+    border-bottom: var(--border-w) solid var(--border); background: var(--bg-raise);
+  }
+  .chartspanel-head {
+    display: flex; align-items: baseline; gap: var(--sp-3);
+    padding: var(--sp-3) var(--sp-5); cursor: pointer; user-select: none;
+  }
+  .chartspanel-head h3 {
+    font-family: var(--font-ui); font-size: var(--fs-xs); font-weight: 700;
+    letter-spacing: .08em; text-transform: uppercase; color: var(--accent);
+  }
+  .chartspanel-sub { font-size: var(--fs-2xs); color: var(--text-muted); }
+  .chartspanel-head button#chartsToggle {
+    margin-left: auto; background: none; border: var(--border-w) solid var(--border);
+    border-radius: var(--radius-sm); color: var(--text-secondary); font: inherit;
+    width: 1.8em; height: 1.8em; cursor: pointer; line-height: 1;
+  }
+  .chartspanel-head button#chartsToggle:hover { border-color: var(--accent); color: var(--accent); }
+  .chartspanel-body { padding: 0 var(--sp-5) var(--sp-5); display: flex; flex-direction: column; gap: var(--sp-5); }
+  .chartspanel-body[hidden] { display: none; }
+
+  .stat-row { display: flex; gap: var(--sp-4); flex-wrap: wrap; }
+  .stat-tile {
+    flex: 1 1 160px; border-radius: var(--radius-md); padding: var(--sp-3) var(--sp-4);
+    border: var(--border-w) solid var(--border);
+  }
+  .stat-tile.ok   { background: var(--ok-soft);   border-color: var(--ok); }
+  .stat-tile.warn { background: var(--warn-soft); border-color: var(--warn); }
+  .stat-tile.bad  { background: var(--bad-soft);  border-color: var(--bad); }
+  .stat-tile.dim  { background: var(--surface); }
+  .stat-tile-label {
+    font-size: var(--fs-2xs); letter-spacing: .06em; text-transform: uppercase;
+    color: var(--text-secondary); font-weight: 600;
+  }
+  .stat-tile-value { font-family: var(--font-mono); font-size: 28px; font-weight: 600; line-height: 1.4; }
+  .stat-tile.ok   .stat-tile-value { color: var(--ok); }
+  .stat-tile.warn .stat-tile-value { color: var(--warn); }
+  .stat-tile.bad  .stat-tile-value { color: var(--bad); }
+  .stat-tile.dim  .stat-tile-value { color: var(--text-muted); }
+  .stat-tile-sub { font-size: var(--fs-2xs); color: var(--text-muted); }
+
+  .barchart { border: var(--border-w) solid var(--border); border-radius: var(--radius-md); padding: var(--sp-3) var(--sp-4); background: var(--surface); }
+  .barchart-head { display: flex; align-items: baseline; gap: var(--sp-3); flex-wrap: wrap; margin-bottom: var(--sp-2); }
+  .barchart-head h4 { font-size: var(--fs-sm); font-weight: 600; color: var(--text-primary); }
+  .barchart-legend { display: flex; gap: var(--sp-3); flex-wrap: wrap; font-size: var(--fs-2xs); color: var(--text-muted); margin-left: auto; }
+  .barchart-legend span { display: inline-flex; align-items: center; gap: .35em; white-space: nowrap; }
+  .barchart-legend i { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
+  .barchart svg { display: block; width: 100%; height: 160px; overflow: visible; }
+  .barchart-empty { padding: var(--sp-6) 0; text-align: center; color: var(--text-muted); font-size: var(--fs-sm); }
+  .barchart-axislabel { font-size: 9px; fill: var(--text-muted); font-family: var(--font-mono); }
+  .barchart-gridline { stroke: var(--border); stroke-width: 1; }
+  .barchart-deadline { stroke: var(--bad); stroke-width: 1.2; stroke-dasharray: 4 3; }
+  .barchart-deadline-label { font-size: 9px; fill: var(--bad); font-family: var(--font-mono); }
+
   .empty {
     padding: var(--sp-8); text-align: center; color: var(--text-muted); letter-spacing: .04em;
   }
@@ -412,6 +478,20 @@
 </div>
 
 <div class="chips" id="chips"></div>
+
+<section class="chartspanel" id="chartsPanel">
+  <div class="chartspanel-head" id="chartsHead">
+    <h3>on-chain metrics</h3>
+    <span class="chartspanel-sub" id="chartsSub"></span>
+    <button id="chartsToggle" type="button" aria-label="collapse charts">▾</button>
+  </div>
+  <div class="chartspanel-body" id="chartsBody">
+    <div class="stat-row" id="statTiles"></div>
+    <div class="barchart" id="chartHitMiss"></div>
+    <div class="barchart" id="chartLatency"></div>
+    <div class="barchart" id="chartInclusion"></div>
+  </div>
+</section>
 
 <details class="legend">
   <summary>▸ what does each column mean? (plain-English legend)</summary>
@@ -746,6 +826,187 @@ const txtCell = (v, edge, max) => {
 // deferred-until-sentry placeholder cell
 const naCell = edge => `<td class="dim${edge ? ' groupedge' : ''}" title="needs a p2p sentry — deferred to a later phase">n/a</td>`;
 
+// ===== on-chain metric charts =====
+const hasVal = v => v !== null && v !== undefined;
+const CHART_SVG_H = 160;
+
+// Groups rows into ordered buckets keyed by a numeric field (epoch), picking a
+// bucket width so the visible window renders ~targetBuckets bars regardless of
+// how many epochs are loaded (the "epochs" selector ranges 5-100+).
+function bucketRows(rows, keyFn, targetBuckets = 40) {
+  const keyed = rows.map(r => keyFn(r)).filter(hasVal);
+  if (!keyed.length) return [];
+  const lo = Math.min(...keyed), hi = Math.max(...keyed);
+  const width = Math.max(1, Math.ceil((hi - lo + 1) / targetBuckets));
+  const buckets = new Map();
+  for (const r of rows) {
+    const k = keyFn(r);
+    if (!hasVal(k)) continue;
+    const start = lo + Math.floor((k - lo) / width) * width;
+    if (!buckets.has(start)) buckets.set(start, { start, end: start + width - 1, rows: [] });
+    buckets.get(start).rows.push(r);
+  }
+  return [...buckets.values()].sort((a, b) => a.start - b.start);
+}
+
+// dedupe by slot: two monitored validators can share a duty slot, and block-
+// level timing fields (arrival/processing/import) are identical for both —
+// counting them twice would double the averaged latency.
+function dedupeBySlot(rows) {
+  const seen = new Set(), out = [];
+  for (const r of rows) {
+    if (seen.has(r.slot)) continue;
+    seen.add(r.slot); out.push(r);
+  }
+  return out;
+}
+
+function countField(bucket, field, wantValue) {
+  let n = 0;
+  for (const r of bucket.rows) if (hasVal(r[field]) && Number(r[field]) === wantValue) n++;
+  return n;
+}
+function avgField(bucket, field) {
+  const rows = dedupeBySlot(bucket.rows);
+  let sum = 0, n = 0;
+  for (const r of rows) if (hasVal(r[field])) { sum += Number(r[field]); n++; }
+  return n ? sum / n : 0;
+}
+// import + head-import combined duration, same missing-half handling as pairCell.
+function avgImportField(bucket) {
+  const rows = dedupeBySlot(bucket.rows);
+  let sum = 0, n = 0;
+  for (const r of rows) {
+    if (!hasVal(r.import_write_ms) && !hasVal(r.set_as_head_ms)) continue;
+    sum += (hasVal(r.import_write_ms) ? Number(r.import_write_ms) : 0) +
+           (hasVal(r.set_as_head_ms) ? Number(r.set_as_head_ms) : 0);
+    n++;
+  }
+  return n ? sum / n : 0;
+}
+
+function statTileHtml(label, valueText, sub, tone) {
+  return `<div class="stat-tile ${tone}"><div class="stat-tile-label">${esc(label)}</div>` +
+    `<div class="stat-tile-value">${esc(valueText)}</div>` +
+    `<div class="stat-tile-sub">${esc(sub)}</div></div>`;
+}
+const ratioTone = pct => pct === null ? 'dim' : pct >= 98 ? 'ok' : pct >= 90 ? 'warn' : 'bad';
+
+function renderStatTiles(rows) {
+  const ratio = field => {
+    let hit = 0, total = 0;
+    for (const r of rows) if (hasVal(r[field])) { total++; if (Number(r[field]) === 1) hit++; }
+    return total ? { pct: hit / total * 100, hit, total } : null;
+  };
+  const head = ratio('head_correct');
+  const target = ratio('target_correct');
+  let missed = 0, missedTotal = 0;
+  for (const r of rows) if (hasVal(r.missed)) { missedTotal++; if (Number(r.missed) === 1) missed++; }
+  $('statTiles').innerHTML = [
+    statTileHtml('Head Hit Ratio', head ? head.pct.toFixed(1) + '%' : '–',
+      head ? `${head.hit}/${head.total} duties` : 'no data yet', ratioTone(head ? head.pct : null)),
+    statTileHtml('Target Hit Ratio', target ? target.pct.toFixed(1) + '%' : '–',
+      target ? `${target.hit}/${target.total} duties` : 'no data yet', ratioTone(target ? target.pct : null)),
+    statTileHtml('Missed Attestations', missedTotal ? String(missed) : '–',
+      missedTotal ? `of ${missedTotal} duties` : 'no data yet',
+      !missedTotal ? 'dim' : missed === 0 ? 'ok' : missed / missedTotal > 0.05 ? 'bad' : 'warn'),
+  ].join('');
+}
+
+// One hand-rolled stacked-bar SVG builder shared by all three time-series
+// charts. viewBox width is measured from the live container so text/lines
+// render at native pixel size (no non-uniform-scale distortion from a fixed
+// viewBox stretched with preserveAspectRatio="none").
+function renderStackedBar(elId, title, buckets, series, opts = {}) {
+  const el = $(elId);
+  const legend = series.map(s => `<span><i style="background:${s.color}"></i>${esc(s.label)}</span>`).join('');
+  const head = `<div class="barchart-head"><h4>${esc(title)}</h4><div class="barchart-legend">${legend}</div></div>`;
+  if (!buckets.length) {
+    el.innerHTML = head + `<div class="barchart-empty">no rows to chart yet</div>`;
+    return;
+  }
+  const w = el.clientWidth > 40 ? el.clientWidth : 900;
+  const values = buckets.map(b => series.reduce((sum, s) => sum + (s.get(b) || 0), 0));
+  const maxVal = Math.max(1, ...values, opts.deadline || 0);
+  const n = buckets.length;
+  const padL = 34, padB = 14, padT = 6, padR = 4;
+  const plotW = w - padL - padR, plotH = CHART_SVG_H - padT - padB;
+  const gap = 2;
+  const barW = Math.max(1, plotW / n - gap);
+  const yFor = v => padT + plotH - (v / maxVal) * plotH;
+
+  const gridLines = [0, 0.25, 0.5, 0.75, 1].map(f => {
+    const v = Math.round(maxVal * f), y = yFor(v);
+    return `<line class="barchart-gridline" x1="${padL}" x2="${w - padR}" y1="${y}" y2="${y}"/>` +
+      `<text class="barchart-axislabel" x="${padL - 4}" y="${y + 3}" text-anchor="end">${opts.fmtY ? esc(opts.fmtY(v)) : v}</text>`;
+  }).join('');
+
+  let bars = '';
+  buckets.forEach((b, i) => {
+    const x = padL + i * (barW + gap);
+    let yCursor = padT + plotH;
+    for (const s of series) {
+      const v = s.get(b) || 0;
+      if (v <= 0) continue;
+      const h = (v / maxVal) * plotH;
+      yCursor -= h;
+      const tip = opts.tooltip ? opts.tooltip(b, s) : `${s.label}: ${v}`;
+      bars += `<rect x="${x.toFixed(1)}" y="${yCursor.toFixed(1)}" width="${barW.toFixed(1)}" height="${Math.max(h, 0.5).toFixed(1)}" style="fill:${s.color}"><title>${esc(tip)}</title></rect>`;
+    }
+  });
+
+  const labelEvery = Math.max(1, Math.ceil(n / 8));
+  const xLabels = buckets.map((b, i) => {
+    if (i % labelEvery !== 0 && i !== n - 1) return '';
+    const x = padL + i * (barW + gap) + barW / 2;
+    return `<text class="barchart-axislabel" x="${x.toFixed(1)}" y="${CHART_SVG_H - 2}" text-anchor="middle">${esc(opts.fmtX ? opts.fmtX(b) : b.start)}</text>`;
+  }).join('');
+
+  let deadline = '';
+  if (opts.deadline) {
+    const y = yFor(opts.deadline);
+    deadline = `<line class="barchart-deadline" x1="${padL}" x2="${w - padR}" y1="${y.toFixed(1)}" y2="${y.toFixed(1)}"/>` +
+      `<text class="barchart-deadline-label" x="${w - padR}" y="${(y - 3).toFixed(1)}" text-anchor="end">${esc(opts.deadlineLabel || '')}</text>`;
+  }
+
+  el.innerHTML = head +
+    `<svg viewBox="0 0 ${w} ${CHART_SVG_H}">${gridLines}${bars}${deadline}${xLabels}</svg>`;
+}
+
+function renderCharts(rows) {
+  renderStatTiles(rows);
+  const buckets = bucketRows(rows, r => Number(r.epoch));
+  $('chartsSub').textContent = rows.length
+    ? `${rows.length} rows across ${buckets.length} bucket${buckets.length === 1 ? '' : 's'}`
+    : 'no data yet';
+  const fmtEpochRange = b => b.start === b.end ? String(b.start) : `${b.start}–${b.end}`;
+  const countTip = (b, s) => `epoch ${fmtEpochRange(b)} · ${s.label} ${s.get(b)}`;
+
+  renderStackedBar('chartHitMiss', 'Head vote: hit vs miss', buckets, [
+    { label: 'hit', color: 'var(--ok)', get: b => countField(b, 'head_correct', 1) },
+    { label: 'miss', color: 'var(--bad)', get: b => countField(b, 'head_correct', 0) },
+  ], { fmtX: fmtEpochRange, tooltip: countTip });
+
+  renderStackedBar('chartInclusion', 'Attestation inclusion: attested vs missed', buckets, [
+    { label: 'attested', color: 'var(--ok)', get: b => countField(b, 'missed', 0) },
+    { label: 'missed', color: 'var(--bad)', get: b => countField(b, 'missed', 1) },
+  ], { fmtX: fmtEpochRange, tooltip: countTip });
+
+  renderStackedBar('chartLatency', 'Block latency breakdown (ms)', buckets, [
+    { label: 'block arrival', color: 'var(--stage-arrival)', get: b => avgField(b, 'block_seen_ms') },
+    { label: 'data wait', color: 'var(--stage-avail)', get: b => avgField(b, 'avail_dur_ms') },
+    { label: 'block proc', color: 'var(--stage-proc)', get: b => avgField(b, 'block_processing_ms') },
+    { label: 'import', color: 'var(--stage-import)', get: b => avgImportField(b) },
+    { label: 'vc publish', color: 'var(--stage-vc)', get: b => avgField(b, 'vc_publish_dur_ms') },
+  ], {
+    fmtX: fmtEpochRange,
+    fmtY: v => v >= 1000 ? (v / 1000).toFixed(1) + 's' : v + 'ms',
+    deadline: 4000,
+    deadlineLabel: 'attestation deadline (4s)',
+    tooltip: (b, s) => `epoch ${fmtEpochRange(b)} · ${s.label} ${Math.round(s.get(b))}ms`,
+  });
+}
+
 function renderRows(rows) {
   const tb = $('rows');
   const frag = [];
@@ -871,6 +1132,7 @@ async function refresh() {
     if (data.error) throw new Error(data.error);
     liveRows = data.rows;
     renderRows(liveRows);
+    renderCharts(liveRows);
     $('live').className = 'live'; $('livetext').textContent = 'LIVE';
     $('updated').textContent = 'last update ' + new Date().toISOString().slice(11, 19) + ' utc';
   } catch (e) {
@@ -890,12 +1152,14 @@ function setTab(tab) {
   lastSlots = new Set();
   if (tab === 'live') {
     renderRows(liveRows);
+    renderCharts(liveRows);
     $('live').className = paused ? 'live stale' : 'live';
     $('livetext').textContent = paused ? 'PAUSED' : 'LIVE';
     $('next').textContent = paused ? 'paused' : 'next refresh ' + Math.max(0, Math.ceil((timerEnd - Date.now()) / 1000)) + 's';
     if (!paused && liveRows.length === 0) refresh();
   } else {
     renderRows(csvRows);
+    renderCharts(csvRows);
     $('live').className = 'live stale';
     $('livetext').textContent = csvRows.length ? 'CSV' : 'CSV READY';
     $('updated').textContent = csvRows.length ? 'csv preview loaded' : 'upload a Datadog CSV';
@@ -965,6 +1229,7 @@ async function renderCsvWithMapping() {
     csvRows = mergeDiagnosticsRows(diagnosticsRows, result.rows);
     lastSlots = new Set();
     renderRows(csvRows);
+    renderCharts(csvRows);
     $('csvStats').innerHTML = csvDebugStats(result, diagnosticsRows.length, csvRows.length);
     $('live').className = csvRows.length ? 'live stale' : 'live err';
     $('livetext').textContent = csvRows.length ? 'CSV+CH' : 'NO CSV ROWS';
@@ -973,6 +1238,7 @@ async function renderCsvWithMapping() {
     csvRows = result.rows;
     lastSlots = new Set();
     renderRows(csvRows);
+    renderCharts(csvRows);
     $('csvStats').innerHTML = csvDebugStats(result, 'error', csvRows.length);
     $('live').className = csvRows.length ? 'live stale' : 'live err';
     $('livetext').textContent = csvRows.length ? 'CSV ONLY' : 'NO CSV ROWS';
@@ -999,6 +1265,18 @@ $('pause').onclick = () => {
 };
 $('liveTab').onclick = () => setTab('live');
 $('datadogTab').onclick = () => setTab('datadog');
+
+(function initChartsCollapse() {
+  const collapsed = localStorage.getItem('attmon-charts-collapsed') === '1';
+  $('chartsBody').hidden = collapsed;
+  $('chartsToggle').textContent = collapsed ? '▸' : '▾';
+})();
+$('chartsToggle').onclick = () => {
+  const collapsed = !$('chartsBody').hidden;
+  $('chartsBody').hidden = collapsed;
+  $('chartsToggle').textContent = collapsed ? '▸' : '▾';
+  localStorage.setItem('attmon-charts-collapsed', collapsed ? '1' : '');
+};
 function themeLabel(t) { return t === 'light' ? '☾ dark' : '☀ light'; }
 $('themeToggle').textContent = themeLabel(document.documentElement.getAttribute('data-theme'));
 $('themeToggle').onclick = () => {
