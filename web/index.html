@@ -432,6 +432,7 @@
   <select id="csvSource"></select>
   <button id="csvApply">render</button>
   <button id="csvClear">clear csv</button>
+  <button id="csvExportBackfill" title="Download slot,validator_index pairs for every row the chain-data lookup couldn't exact-match, for use with the indexer's BACKFILL_PAIRS_FILE historical backfill">export backfill pairs</button>
   <span class="stat" id="csvStats">no csv loaded</span>
 </div>
 
@@ -1174,6 +1175,36 @@ $('csvFile').onchange = async () => {
   await renderCsvWithMapping();
 };
 $('csvApply').onclick = renderCsvWithMapping;
+// Historical CSVs are commonly outside the indexer's automatic re-eval
+// window (see README: BACKFILL_EPOCHS covers only a first-discovery window,
+// REEVAL_NULL_LOOKBACK only ~64 epochs), so rows the exact-match lookup
+// could not chain-enrich need a manual one-shot backfill. This exports the
+// distinct (slot, validator_index) pairs still missing chain data as a CSV
+// the indexer's BACKFILL_PAIRS_FILE mode can consume directly. Rows with
+// only an unresolved pubkey (no validator_index yet) are skipped — the
+// indexer's targeted reprocess needs a resolved index, same as TARGET_SLOT/
+// TARGET_VALIDATOR_INDEX already does.
+function exportBackfillPairsCsv() {
+  const pairs = new Set();
+  for (const r of csvRows) {
+    if (r.chain_enriched) continue;
+    if (r.validator_index === null || r.validator_index === undefined) continue;
+    pairs.add(`${r.slot},${r.validator_index}`);
+  }
+  if (!pairs.size) {
+    alert('Nothing to export: no CSV rows with a resolved validator_index are missing chain-data enrichment.');
+    return;
+  }
+  const csvText = 'slot,validator_index\n' + [...pairs].join('\n') + '\n';
+  const blob = new Blob([csvText], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'backfill_pairs.csv';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+$('csvExportBackfill').onclick = exportBackfillPairsCsv;
 $('csvClear').onclick = () => {
   csvFiles = [];
   csvHeaders = [];

@@ -227,6 +227,34 @@ class ValidatorDiscoveryTest(unittest.TestCase):
 
         process_epoch.assert_not_called()
 
+    def test_load_backfill_pairs_skips_header_comments_and_blank_lines(self):
+        content = (
+            "slot,validator_index\n"
+            "\n"
+            "# a comment\n"
+            "3597599,1454766\n"
+            "3597600,44\n"
+            "3597599,1454766\n"  # duplicate, dropped
+        )
+        with patch("builtins.open", mock_open(read_data=content)):
+            pairs = indexer.load_backfill_pairs("/tmp/pairs.csv")
+
+        self.assertEqual(pairs, [(3597599, 1454766), (3597600, 44)])
+
+    def test_run_backfill_pairs_continues_past_individual_failures(self):
+        pairs = [(3597599, 1454766), (3597600, 44), (3597601, 99)]
+
+        def fake_process(slot, validator_index, genesis_time):
+            if validator_index == 44:
+                raise RuntimeError("epoch not finalized yet")
+            return 1
+
+        with patch.object(indexer, "process_slot_for_validator", side_effect=fake_process):
+            succeeded, failed = indexer.run_backfill_pairs(pairs, genesis_time=0)
+
+        self.assertEqual(succeeded, 2)
+        self.assertEqual(failed, [(3597600, 44, "epoch not finalized yet")])
+
     def test_process_epoch_uses_discovered_validator_set_only(self):
         validators = {
             22: {"pubkey": "0x22", "name": "validator-22"},

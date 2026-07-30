@@ -82,6 +82,41 @@ docker run --rm --network eth_default \
   eth-indexer
 ```
 
+### Batch historical backfill (BACKFILL_PAIRS_FILE)
+The poll loop only ever re-judges a bounded window — `BACKFILL_EPOCHS` (default
+3) the first time a validator is discovered, `REEVAL_EPOCHS` (default 6) for
+reorg self-correction, and `REEVAL_NULL_LOOKBACK` (default 64, ~7.7 hours) for
+stuck NULL verdicts. Anything older than that (e.g. a Datadog CSV from a
+previous day) is never touched again automatically, even though the beacon
+node still has the history — it just needs a manual reprocess.
+
+For more than one `(slot, validator_index)` pair, set `BACKFILL_PAIRS_FILE` to
+a CSV/text file with one `slot,validator_index` pair per line (blank lines,
+`#` comments, and a header row are ignored) instead of setting
+`TARGET_SLOT`/`TARGET_VALIDATOR_INDEX` once per pair:
+
+```bash
+# pairs.csv:
+#   slot,validator_index
+#   3591199,1439433
+#   3591199,1439544
+BACKFILL_PAIRS_FILE=/data/pairs.csv docker compose run --rm indexer
+```
+
+The Datadog CSV tab's **export backfill pairs** button generates this file
+directly from whatever's currently loaded: it collects the distinct
+`(slot, validator_index)` pairs among rows the exact-match chain lookup could
+not enrich (skipping rows that only carry an unresolved pubkey, same as
+`TARGET_VALIDATOR_INDEX` requires a resolved index) and downloads them as
+`backfill_pairs.csv`, ready to hand to the command above. Each pair is
+reprocessed independently — one unfinalized, mismatched, or pruned-history
+pair is logged and skipped without aborting the rest of the batch.
+
+Propagation/aggregator-pickup fields (`propag`, `picked`) are sourced from the
+p2p watcher's live SSE subscription and can never be backfilled this way —
+there is no stored history of past gossip timing to replay (see "P2P layer"
+below).
+
 ## Runbook: reading the UI
 
 The UI does not hide or "blank out" successful data. A dash (`–`) means the

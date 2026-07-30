@@ -33,6 +33,11 @@ REEVAL_NULL_LOOKBACK = int(os.environ.get("REEVAL_NULL_LOOKBACK", "64"))
 POLL_SECONDS = int(os.environ.get("POLL_SECONDS", "60"))
 TARGET_SLOT = os.environ.get("TARGET_SLOT", "").strip()
 TARGET_VALIDATOR_INDEX = os.environ.get("TARGET_VALIDATOR_INDEX", "").strip()
+# Batch counterpart to TARGET_SLOT/TARGET_VALIDATOR_INDEX: a path to a
+# "slot,validator_index" pairs file (one pair per line) to reprocess in a
+# single one-shot run, for historical data outside the poll loop's automatic
+# re-eval window (BACKFILL_EPOCHS / REEVAL_NULL_LOOKBACK above).
+BACKFILL_PAIRS_FILE = os.environ.get("BACKFILL_PAIRS_FILE", "").strip()
 
 SLOTS_PER_EPOCH = 32
 SECONDS_PER_SLOT = 12
@@ -731,6 +736,51 @@ def process_slot_for_validator(slot, validator_index, genesis_time):
     return process_epoch(epoch, genesis_time, validators, trustworthy)
 
 
+def load_backfill_pairs(path):
+    """Parse a "slot,validator_index" pairs file for batch historical backfill.
+
+    One pair per line. Blank lines, '#' comments, and a non-numeric header
+    row are skipped. Duplicate pairs are dropped, first occurrence kept.
+    """
+    pairs = []
+    seen = set()
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = [p.strip() for p in line.split(",")]
+            if len(parts) < 2:
+                continue
+            try:
+                pair = (int(parts[0]), int(parts[1]))
+            except ValueError:
+                continue  # header row or malformed line
+            if pair not in seen:
+                seen.add(pair)
+                pairs.append(pair)
+    return pairs
+
+
+def run_backfill_pairs(pairs, genesis_time):
+    """Reprocess a batch of (slot, validator_index) duty pairs, e.g. every row
+    of a historical CSV export whose chain data fell outside the poll loop's
+    automatic re-eval window. Each pair is independent: one that's
+    unfinalized, mismatched, or unresolvable (beacon node has pruned that
+    history) is logged and skipped without aborting the rest of the batch."""
+    succeeded = 0
+    failed = []
+    for slot, validator_index in pairs:
+        try:
+            process_slot_for_validator(slot, validator_index, genesis_time)
+            succeeded += 1
+        except Exception as e:
+            failed.append((slot, validator_index, str(e)))
+            log.warning("backfill failed for validator %s slot %s: %s", validator_index, slot, e)
+    log.info("backfill pairs complete: %s succeeded, %s failed", succeeded, len(failed))
+    return succeeded, failed
+
+
 def last_processed_epoch(validators):
     if not validators:
         return None
@@ -761,6 +811,14 @@ def main():
     ensure_schema()
     log.info("starting: beacon=%s backfill=%s epochs", BEACON_URL, BACKFILL_EPOCHS)
     genesis_time = get_genesis_time()
+
+    if BACKFILL_PAIRS_FILE:
+        if TARGET_SLOT or TARGET_VALIDATOR_INDEX:
+            raise RuntimeError("BACKFILL_PAIRS_FILE cannot be combined with TARGET_SLOT/TARGET_VALIDATOR_INDEX")
+        pairs = load_backfill_pairs(BACKFILL_PAIRS_FILE)
+        succeeded, failed = run_backfill_pairs(pairs, genesis_time)
+        log.info("targeted batch reprocess: %s/%s pairs succeeded", succeeded, len(pairs))
+        return
 
     if TARGET_SLOT or TARGET_VALIDATOR_INDEX:
         if not TARGET_SLOT or not TARGET_VALIDATOR_INDEX:
