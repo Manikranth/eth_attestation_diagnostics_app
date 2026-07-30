@@ -67,6 +67,12 @@
     --bad-soft: rgba(242,89,107,.10);
     --info-soft: rgba(79,195,224,.10);
 
+    --stage-avail:   #3987e5;
+    --stage-arrival: #199e70;
+    --stage-proc:    #9085e9;
+    --stage-import:  #c98500;
+    --stage-vc:      #d55181;
+
     --shadow-sm: 0 1px 2px rgba(0,0,0,.35);
     --shadow-md: 0 6px 20px rgba(0,0,0,.45);
   }
@@ -96,6 +102,12 @@
     --warn-soft: rgba(168,91,6,.08);
     --bad-soft: rgba(194,43,65,.08);
     --info-soft: rgba(13,116,144,.08);
+
+    --stage-avail:   #2a78d6;
+    --stage-arrival: #1baf7a;
+    --stage-proc:    #4a3aa7;
+    --stage-import:  #eda100;
+    --stage-vc:      #e87ba4;
 
     --shadow-sm: 0 1px 2px rgba(16,24,43,.06);
     --shadow-md: 0 8px 24px rgba(16,24,43,.10);
@@ -357,6 +369,68 @@
                            { color: var(--bad); background: var(--bad-soft); }
   .pill.unknown            { color: var(--text-muted); border-color: var(--border); }
 
+  .slotchart {
+    border-bottom: var(--border-w) solid var(--border); background: var(--bg-raise);
+    padding: var(--sp-3) var(--sp-5) var(--sp-4); overflow-x: auto;
+  }
+  .slotchart-head { display: flex; align-items: baseline; gap: var(--sp-3); margin-bottom: var(--sp-3); flex-wrap: wrap; }
+  .slotchart-head h3 {
+    font-family: var(--font-ui); font-size: var(--fs-xs); font-weight: 700;
+    letter-spacing: .08em; text-transform: uppercase; color: var(--accent);
+  }
+  .slotchart-sub { font-size: var(--fs-2xs); color: var(--text-muted); }
+  .slotchart-legend { display: flex; gap: var(--sp-3); flex-wrap: wrap; font-size: var(--fs-2xs); color: var(--text-muted); margin-left: auto; }
+  .slotchart-legend span { display: inline-flex; align-items: center; gap: .35em; white-space: nowrap; }
+  .slotchart-legend i { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
+  .slotchart-body { display: flex; gap: var(--sp-3); }
+  .slotchart-axis { position: relative; width: 2.4em; height: 220px; flex: none; font-size: var(--fs-2xs); color: var(--text-muted); font-variant-numeric: tabular-nums; }
+  .slotchart-axis .tick-label { position: absolute; right: .3em; transform: translateY(50%); }
+  .slotchart-bars { display: flex; gap: var(--sp-2); align-items: flex-end; }
+  .slot-bar { display: flex; flex-direction: column; align-items: center; gap: .35em; cursor: pointer; background: none; border: none; font: inherit; padding: 0; }
+  .slot-bar-track {
+    position: relative; width: 34px; height: 220px; background: var(--bg);
+    border: var(--border-w) solid var(--border); border-top: 2px dashed var(--border-strong);
+    border-radius: var(--radius-sm); overflow: hidden;
+  }
+  .slot-bar:hover .slot-bar-track, .slot-bar:focus-visible .slot-bar-track {
+    border-color: var(--accent); outline: none;
+  }
+  .slot-bar.selected .slot-bar-track { box-shadow: 0 0 0 2px var(--accent) inset; }
+  .seg { position: absolute; left: 1px; right: 1px; min-height: 2px; border-radius: 1px; }
+  .seg.inferred {
+    background-image: repeating-linear-gradient(45deg, rgba(255,255,255,.4) 0 2px, transparent 2px 5px);
+    background-blend-mode: overlay;
+  }
+  .seg.bottleneck { box-shadow: 0 0 0 2px var(--accent-strong) inset; }
+  .seg-overflow {
+    position: absolute; top: 1px; right: 1px; font-size: 9px; line-height: 1; color: var(--bad);
+  }
+  .tick { position: absolute; left: 3px; right: 3px; height: 2px; background: var(--border-strong); }
+  .slot-bar-fault { width: 34px; height: 3px; border-radius: 2px; background: var(--border); }
+  .slot-bar-fault.fault-perfect            { background: var(--ok); }
+  .slot-bar-fault.fault-included_late,
+  .slot-bar-fault.fault-partial_success,
+  .slot-bar-fault.fault-aggregator_missed  { background: var(--warn); }
+  .slot-bar-fault.fault-wrong_head_vote, .slot-bar-fault.fault-propagation_too_slow,
+  .slot-bar-fault.fault-node_broadcast_issue, .slot-bar-fault.fault-block_arrived_late,
+  .slot-bar-fault.fault-vc_produce_failed, .slot-bar-fault.fault-no_block_in_slot
+                                            { background: var(--bad); }
+  .slot-bar-label { font-size: var(--fs-2xs); color: var(--text-muted); font-variant-numeric: tabular-nums; }
+  .slotchart-empty { color: var(--text-muted); font-size: var(--fs-sm); padding: var(--sp-4) 0; }
+  .slotchart-detail {
+    margin-top: var(--sp-3); padding: var(--sp-3) var(--sp-4);
+    border: var(--border-w) solid var(--border); border-radius: var(--radius-md);
+    background: var(--surface); font-size: var(--fs-sm);
+  }
+  .slotchart-detail h4 { font-size: var(--fs-xs); color: var(--text-primary); margin-bottom: .6em; }
+  .slotchart-detail dl { display: grid; grid-template-columns: max-content 1fr; gap: .25em .8em; }
+  .slotchart-detail dt { color: var(--text-secondary); font-weight: 600; white-space: nowrap; }
+  .slotchart-detail dd { color: var(--text-primary); font-variant-numeric: tabular-nums; }
+  .slotchart-detail .close {
+    float: right; cursor: pointer; color: var(--text-muted); background: none; border: none; font: inherit;
+  }
+  .slotchart-detail .close:hover { color: var(--accent); }
+
   .empty {
     padding: var(--sp-8); text-align: center; color: var(--text-muted); letter-spacing: .04em;
   }
@@ -470,6 +544,19 @@
     </div>
   </div>
 </details>
+
+<section class="slotchart" id="slotChart" aria-label="per-slot timing chart">
+  <div class="slotchart-head">
+    <h3>per-slot timing</h3>
+    <span class="slotchart-sub" id="slotChartSub"></span>
+    <div class="slotchart-legend" id="slotChartLegend"></div>
+  </div>
+  <div class="slotchart-body">
+    <div class="slotchart-axis" id="slotChartAxis"></div>
+    <div class="slotchart-bars" id="slotChartBars"></div>
+  </div>
+  <div class="slotchart-detail" id="slotChartDetail" hidden></div>
+</section>
 
 <div class="tablewrap">
   <table>
@@ -721,16 +808,25 @@ const msCell = (v, edge, warn = 4000, bad = 8000) => {
   if (v === null || v === undefined) return `<td class="dim${edge ? ' groupedge' : ''}">–</td>`;
   return tCell(Number(v) / 1000, edge, warn / 1000, bad / 1000);
 };
+// "offset (duration)" plain-text pair, both in ms, either half may be missing.
+// Shared by the table's pairCell and the slot-chart detail panel so both surfaces
+// never drift apart.
+const hasVal = v => v !== null && v !== undefined;
+const fmtPair = (offMs, durMs) => {
+  if (!hasVal(offMs) && !hasVal(durMs)) return '–';
+  const offStr = hasVal(offMs) ? fmtT(Number(offMs) / 1000) : '–';
+  const durStr = hasVal(durMs) ? fmtT(Number(durMs) / 1000) : '–';
+  return `${offStr} (${durStr})`;
+};
 // TWO-number cell: "offset into slot (duration of the step)". Both in ms.
 // Either half may be missing → shown as a dim "–". If BOTH missing the whole
 // cell is a single dim "–". Offset value drives the ok/warn/bad color.
 const pairCell = (offMs, durMs, edge, warn = 4000, bad = 8000) => {
   const e = edge ? ' groupedge' : '';
-  const has = v => v !== null && v !== undefined;
-  if (!has(offMs) && !has(durMs)) return `<td class="dim${e}">–</td>`;
-  const offStr = has(offMs) ? fmtT(Number(offMs) / 1000) : '–';
-  const durStr = has(durMs) ? fmtT(Number(durMs) / 1000) : '–';
-  const c = has(offMs) ? Number(offMs) : Number(durMs);
+  if (!hasVal(offMs) && !hasVal(durMs)) return `<td class="dim${e}">–</td>`;
+  const offStr = hasVal(offMs) ? fmtT(Number(offMs) / 1000) : '–';
+  const durStr = hasVal(durMs) ? fmtT(Number(durMs) / 1000) : '–';
+  const c = hasVal(offMs) ? Number(offMs) : Number(durMs);
   const cls = c <= warn ? 'ok' : c <= bad ? 'warn' : 'bad';
   return `<td class="${cls}${e}" title="offset ${offStr} · duration ${durStr}">${offStr} <span class="dim">(${durStr})</span></td>`;
 };
@@ -745,6 +841,177 @@ const txtCell = (v, edge, max) => {
 };
 // deferred-until-sentry placeholder cell
 const naCell = edge => `<td class="dim${edge ? ' groupedge' : ''}" title="needs a p2p sentry — deferred to a later phase">n/a</td>`;
+
+// ===== per-slot timing chart =====
+// One bar per slot, drawn as a true timeline: a segment's vertical position is
+// its real logged offset into the 12s slot, sized by its logged duration — not
+// a running sum. Two components (BN consensus / EL verify) have a duration but
+// no logged start time, so they're merged into one hatched "inferred position"
+// segment anchored to block-import's offset. Point-events with an offset but no
+// duration (propagation, blob arrival/verify) are drawn as ticks, never as a
+// colored block, so the rendering itself signals what's measured vs inferred.
+const SLOT_MS = 12000;
+const clampPct = n => Math.max(0, Math.min(100, n));
+
+const STAGES = [
+  { key: 'avail',   label: 'Block available',                         off: 'available_ms',  dur: 'avail_dur_ms',   color: 'var(--stage-avail)' },
+  { key: 'arrival', label: 'Block arrival (gossip)',                  off: 'block_seen_ms', dur: 'gossip_late_by_ms', color: 'var(--stage-arrival)' },
+  { key: 'proc',    label: 'Block processing (BN consensus + EL verify)', color: 'var(--stage-proc)', inferred: true },
+  { key: 'import',  label: 'Block import + head import',              color: 'var(--stage-import)' },
+  { key: 'vc',      label: 'VC produce + sign + publish',             off: 'att_start_ms',   dur: 'vc_publish_dur_ms', color: 'var(--stage-vc)' },
+];
+const MARKERS = [
+  { key: 'propagation', label: 'Propagation (vote to wire)', off: 'propagation_delay_ms' },
+  { key: 'blobArrival',  label: 'Blob arrival',               off: 'gossip_blob_arrival_ms' },
+  { key: 'blobVerify',   label: 'Blob verify ready',          off: 'blobs_ready_ms' },
+];
+// substring match against row.bottleneck, checked in order (most specific first)
+const BOTTLENECK_PATTERNS = [
+  ['blob', 'blobVerify'], ['propagation', 'propagation'], ['head', 'import'],
+  ['import', 'import'], ['publish', 'vc'], ['vc', 'vc'],
+  ['consensus', 'proc'], ['verify', 'proc'], ['arrival', 'arrival'], ['available', 'avail'],
+];
+function matchBottleneck(str) {
+  if (!str) return null;
+  const s = String(str).toLowerCase();
+  const hit = BOTTLENECK_PATTERNS.find(([needle]) => s.includes(needle));
+  return hit ? hit[1] : null;
+}
+
+// builds real+inferred Gantt segments and point-event ticks for one row, in %
+// of the 0–12s track. Only positions what's actually logged — never guesses an
+// offset for a field that doesn't have one.
+function stageSegments(row) {
+  const bottleneckKey = matchBottleneck(row.bottleneck);
+  const segments = [];
+  for (const s of STAGES) {
+    let offMs, durMs, inferred = !!s.inferred;
+    if (s.key === 'proc') {
+      const compositeDur = (hasVal(row.consensus_verify_ms) ? Number(row.consensus_verify_ms) : 0) +
+                           (hasVal(row.el_verify_ms) ? Number(row.el_verify_ms) : 0);
+      if (!hasVal(row.imported_ms) || compositeDur <= 0) continue; // can't anchor or nothing to show
+      offMs = Number(row.imported_ms) - compositeDur;
+      durMs = compositeDur;
+    } else if (s.key === 'import') {
+      if (!hasVal(row.imported_ms)) continue;
+      offMs = Number(row.imported_ms);
+      let endMs = offMs + (hasVal(row.import_write_ms) ? Number(row.import_write_ms) : 0);
+      if (hasVal(row.head_ready_ms)) {
+        endMs = Math.max(endMs, Number(row.head_ready_ms) + (hasVal(row.set_as_head_ms) ? Number(row.set_as_head_ms) : 0));
+      }
+      durMs = Math.max(endMs - offMs, 0);
+    } else {
+      if (!hasVal(row[s.off])) continue; // no logged offset — can't place on a real timeline
+      offMs = Number(row[s.off]);
+      durMs = hasVal(row[s.dur]) ? Number(row[s.dur]) : 0;
+    }
+    const bottomPct = clampPct(offMs / SLOT_MS * 100);
+    const rawTopPct = (offMs + durMs) / SLOT_MS * 100;
+    const clipped = rawTopPct > 100;
+    const heightPct = Math.max(clampPct(rawTopPct) - bottomPct, durMs > 0 ? 0.6 : 0.3);
+    segments.push({
+      key: s.key, color: s.color, inferred, clipped, bottomPct, heightPct,
+      bottleneck: s.key === bottleneckKey,
+      title: `${s.label} — ${fmtPair(offMs, durMs)}${inferred ? ' (position approximate — order known, exact start not logged)' : ''}`,
+    });
+  }
+  const markers = [];
+  for (const m of MARKERS) {
+    if (!hasVal(row[m.off])) continue;
+    const offMs = Number(row[m.off]);
+    markers.push({ key: m.key, bottomPct: clampPct(offMs / SLOT_MS * 100), title: `${m.label} — ${fmtT(offMs / 1000)}` });
+  }
+  return { segments, markers };
+}
+
+let chartWindowRows = [];
+let selectedSlotKey = null;
+
+function selectChartWindow(rows, n = 10) {
+  if (!rows.length) return [];
+  let target;
+  if ($('fieldFilter').value === 'validator_index' && $('fieldValue').value.trim()) {
+    target = Number($('fieldValue').value.trim());
+  } else {
+    target = Math.min(...rows.map(r => Number(r.validator_index)));
+  }
+  return rows
+    .filter(r => Number(r.validator_index) === target)
+    .sort((a, b) => Number(b.slot) - Number(a.slot))
+    .slice(0, n)
+    .reverse();
+}
+
+function buildSlotBarHtml(row) {
+  const key = row.slot + ':' + row.validator_index;
+  const { segments, markers } = stageSegments(row);
+  const segHtml = segments.map(s => {
+    const cls = ['seg', s.inferred && 'inferred', s.bottleneck && 'bottleneck'].filter(Boolean).join(' ');
+    const box = `<div class="${cls}" style="bottom:${s.bottomPct}%;height:${s.heightPct}%;background-color:${s.color}" title="${esc(s.title)}"></div>`;
+    const overflow = s.clipped ? `<span class="seg-overflow" title="${esc(s.title)}">▲</span>` : '';
+    return box + overflow;
+  }).join('');
+  const tickHtml = markers.map(m => `<div class="tick" style="bottom:${m.bottomPct}%" title="${esc(m.title)}"></div>`).join('');
+  const fault = row.fault_attribution || 'unknown';
+  const selected = key === selectedSlotKey ? ' selected' : '';
+  return `<button type="button" class="slot-bar${selected}" data-key="${esc(key)}" aria-label="slot ${esc(row.slot)} timing — click for detail">` +
+    `<div class="slot-bar-track">${segHtml}${tickHtml}</div>` +
+    `<div class="slot-bar-fault fault-${esc(fault)}"></div>` +
+    `<div class="slot-bar-label">${esc(row.slot)}</div>` +
+    `</button>`;
+}
+
+function renderBars() {
+  $('slotChartBars').innerHTML = chartWindowRows.length
+    ? chartWindowRows.map(buildSlotBarHtml).join('')
+    : '<div class="slotchart-empty">no rows to chart yet</div>';
+}
+
+function renderSlotChart(rows) {
+  chartWindowRows = selectChartWindow(rows, 10);
+  if (selectedSlotKey && !chartWindowRows.some(r => r.slot + ':' + r.validator_index === selectedSlotKey)) {
+    selectedSlotKey = null;
+    $('slotChartDetail').hidden = true;
+  }
+  renderBars();
+  $('slotChartAxis').innerHTML = [0, 2, 4, 6, 8, 10, 12]
+    .map(s => `<span class="tick-label" style="bottom:${s / 12 * 100}%">${s}s</span>`).join('');
+  $('slotChartLegend').innerHTML = STAGES
+    .map(s => `<span><i style="background:${s.color}"></i>${esc(s.label)}</span>`).join('');
+  $('slotChartSub').textContent = chartWindowRows.length
+    ? `last ${chartWindowRows.length} slot${chartWindowRows.length === 1 ? '' : 's'} · validator ${esc(chartWindowRows[0].validator_index)}`
+    : '';
+}
+
+function showSlotDetail(row) {
+  selectedSlotKey = row.slot + ':' + row.validator_index;
+  const dl = [];
+  for (const s of STAGES) {
+    let off = null, dur = null, label = s.label;
+    if (s.key === 'proc') {
+      const c = hasVal(row.consensus_verify_ms) ? Number(row.consensus_verify_ms) : 0;
+      const e = hasVal(row.el_verify_ms) ? Number(row.el_verify_ms) : 0;
+      dur = (c || e) ? c + e : null;
+    } else if (s.key === 'import') {
+      off = row.imported_ms; dur = row.import_write_ms;
+    } else {
+      off = row[s.off]; dur = row[s.dur];
+    }
+    dl.push(`<dt>${esc(label)}</dt><dd>${esc(fmtPair(off, dur))}</dd>`);
+  }
+  dl.push(`<dt>Head import (set as head)</dt><dd>${esc(fmtPair(row.head_ready_ms, row.set_as_head_ms))}</dd>`);
+  for (const m of MARKERS) {
+    dl.push(`<dt>${esc(m.label)}</dt><dd>${hasVal(row[m.off]) ? esc(fmtT(Number(row[m.off]) / 1000)) : '–'}</dd>`);
+  }
+  const fault = row.fault_attribution || 'unknown';
+  $('slotChartDetail').innerHTML =
+    `<button type="button" class="close">✕ close</button>` +
+    `<h4>slot ${esc(row.slot)} · epoch ${esc(row.epoch)} · validator ${esc(row.validator_index)} ` +
+    `<span class="pill ${esc(fault)}">${esc(fault)}</span></h4>` +
+    `<dl>${dl.join('')}</dl>`;
+  $('slotChartDetail').hidden = false;
+  renderBars();
+}
 
 function renderRows(rows) {
   const tb = $('rows');
@@ -847,6 +1114,8 @@ function renderRows(rows) {
     chip('log_preview', faults.log_preview, '') +
     chip('unknown', faults.unknown, '') ||
     '<span class="chip">no data yet</span>';
+
+  renderSlotChart(rows);
 }
 
 async function refresh() {
@@ -1020,6 +1289,18 @@ $('clearFilters').onclick = () => {
   $('slotFilter').value = '';
   $('fieldValue').value = '';
   refresh();
+};
+$('slotChartBars').onclick = e => {
+  const bar = e.target.closest('.slot-bar');
+  if (!bar) return;
+  const row = chartWindowRows.find(r => r.slot + ':' + r.validator_index === bar.dataset.key);
+  if (row) showSlotDetail(row);
+};
+$('slotChartDetail').onclick = e => {
+  if (!e.target.closest('.close')) return;
+  $('slotChartDetail').hidden = true;
+  selectedSlotKey = null;
+  renderBars();
 };
 $('csvFile').onchange = async () => {
   const files = [...$('csvFile').files];
