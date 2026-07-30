@@ -7,6 +7,7 @@ import {
   detectDatadogMapping,
   parseDatadogCsv,
   parseDatadogCsvFiles,
+  enrichRowsWithChainData,
 } from './datadog_csv.mjs';
 
 test('parseCsv handles quoted commas and embedded newlines', () => {
@@ -483,4 +484,133 @@ test('parseDatadogCsvFiles combines separate BN and VC exports into one slot win
   assert.equal(result.stats.serviceCounts['eth-staking'], 1);
   assert.equal(result.stats.serviceCounts['eth-staking-validator'], 1);
   assert.equal(result.rows.length, 2);
+});
+
+test('enrichRowsWithChainData fills chain-only fields on an exact (slot, validator_index) match', () => {
+  const csvRows = [{
+    slot: 3591500,
+    validator_index: 12345,
+    validator_pubkey: '',
+    block_on_chain: null,
+    head_correct: null,
+    inclusion_distance: null,
+    propagation_delay_ms: null,
+    aggregator_picked: null,
+  }];
+  const chainRows = [{
+    slot: 3591500,
+    validator_index: 12345,
+    validator_pubkey: '0xabc',
+    validator_name: 'val-12345',
+    block_on_chain: 1,
+    proposer_index: 44,
+    exec_block_number: 3309408,
+    head_correct: 1,
+    target_correct: 1,
+    source_correct: 1,
+    inclusion_slot: 3591500,
+    inclusion_distance: 0,
+    committee_index: 5,
+    propagation_delay_ms: 210,
+    aggregator_picked: 0,
+  }];
+
+  const enriched = enrichRowsWithChainData(csvRows, chainRows);
+
+  assert.equal(enriched.length, 1);
+  const row = enriched[0];
+  assert.equal(row.validator_name, 'val-12345');
+  assert.equal(row.block_on_chain, 1);
+  assert.equal(row.proposer_index, 44);
+  assert.equal(row.exec_block_number, 3309408);
+  assert.equal(row.head_correct, 1);
+  assert.equal(row.inclusion_distance, 0);
+  assert.equal(row.committee_index, 5);
+  assert.equal(row.propagation_delay_ms, 210);
+  assert.equal(row.chain_enriched, true);
+});
+
+test('enrichRowsWithChainData never enriches a CSV row with no validator identity, even if a chain row shares the exact slot (regression for the original ClickHouse-leak bug)', () => {
+  const csvRows = [{
+    slot: 3591600,
+    validator_index: null,
+    validator_pubkey: '',
+    block_on_chain: null,
+    head_correct: null,
+  }];
+  const chainRows = [{
+    slot: 3591600,
+    validator_index: 99999,
+    validator_pubkey: '0xchain',
+    validator_name: 'someone-elses-validator',
+    block_on_chain: 1,
+    head_correct: 1,
+  }];
+
+  const enriched = enrichRowsWithChainData(csvRows, chainRows);
+
+  assert.equal(enriched.length, 1);
+  const row = enriched[0];
+  assert.equal(row.validator_name, undefined);
+  assert.equal(row.block_on_chain, null);
+  assert.equal(row.head_correct, null);
+  assert.equal(row.chain_enriched, false);
+});
+
+test('enrichRowsWithChainData matches each validator in a shared slot to its own chain row, never cross-matching', () => {
+  const csvRows = [
+    { slot: 3591700, validator_index: 111, validator_pubkey: '', head_correct: null },
+    { slot: 3591700, validator_index: 222, validator_pubkey: '', head_correct: null },
+  ];
+  const chainRows = [
+    { slot: 3591700, validator_index: 111, validator_pubkey: '0x111', head_correct: 1, inclusion_distance: 1 },
+    { slot: 3591700, validator_index: 222, validator_pubkey: '0x222', head_correct: 0, inclusion_distance: 3 },
+  ];
+
+  const enriched = enrichRowsWithChainData(csvRows, chainRows);
+
+  const row111 = enriched.find(r => r.validator_index === 111);
+  const row222 = enriched.find(r => r.validator_index === 222);
+  assert.equal(row111.head_correct, 1);
+  assert.equal(row111.inclusion_distance, 1);
+  assert.equal(row222.head_correct, 0);
+  assert.equal(row222.inclusion_distance, 3);
+});
+
+test('enrichRowsWithChainData never overwrites a value the CSV/logs already derived', () => {
+  const csvRows = [{
+    slot: 3591800,
+    validator_index: 333,
+    validator_pubkey: '',
+    block_on_chain: true, // already derived from an HTTP 200 access-log line
+    missed: null,
+  }];
+  const chainRows = [{
+    slot: 3591800,
+    validator_index: 333,
+    validator_pubkey: '0x333',
+    block_on_chain: 0, // chain disagrees / is stale — CSV's own observation must win
+    missed: 1,
+  }];
+
+  const enriched = enrichRowsWithChainData(csvRows, chainRows);
+
+  assert.equal(enriched[0].block_on_chain, true);
+  assert.equal(enriched[0].missed, 1);
+});
+
+test('enrichRowsWithChainData leaves fields null when no chain row matches (renders as "-")', () => {
+  const csvRows = [{
+    slot: 3591900,
+    validator_index: 444,
+    validator_pubkey: '',
+    head_correct: null,
+    inclusion_distance: null,
+  }];
+
+  const enriched = enrichRowsWithChainData(csvRows, []);
+
+  assert.equal(enriched[0].head_correct, null);
+  assert.equal(enriched[0].inclusion_distance, null);
+  assert.equal(enriched[0].chain_enriched, false);
 });

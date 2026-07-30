@@ -134,8 +134,29 @@ services:
       CLICKHOUSE_URL: http://clickhouse:8123
       CLICKHOUSE_USER: ${CLICKHOUSE_USER:-attmon}
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-attmon}
+      CHARTS_URL: http://charts:8090
     ports:
       - "8080:8080"
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+      charts:
+        condition: service_started
+    restart: unless-stopped
+
+  # Charts service — one real Plotly chart per table column, server-rendered
+  # in Python (charts/app.py). Internal-only: no host port published. `web`
+  # proxies it at /charts and embeds it in an iframe, so the browser only
+  # ever talks to :8080.
+  charts:
+    build: ./charts
+    container_name: attmon-charts
+    environment:
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-attmon}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-attmon}
+    expose:
+      - "8090"
     depends_on:
       clickhouse:
         condition: service_healthy

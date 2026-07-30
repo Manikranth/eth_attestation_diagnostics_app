@@ -357,6 +357,30 @@
                            { color: var(--bad); background: var(--bad-soft); }
   .pill.unknown            { color: var(--text-muted); border-color: var(--border); }
 
+  .chartspanel {
+    border-bottom: var(--border-w) solid var(--border); background: var(--bg-raise);
+  }
+  .chartspanel-head {
+    display: flex; align-items: baseline; gap: var(--sp-3);
+    padding: var(--sp-3) var(--sp-5); cursor: pointer; user-select: none;
+  }
+  .chartspanel-head h3 {
+    font-family: var(--font-ui); font-size: var(--fs-xs); font-weight: 700;
+    letter-spacing: .08em; text-transform: uppercase; color: var(--accent);
+  }
+  .chartspanel-sub { font-size: var(--fs-2xs); color: var(--text-muted); }
+  .chartspanel-head button#chartsToggle {
+    margin-left: auto; background: none; border: var(--border-w) solid var(--border);
+    border-radius: var(--radius-sm); color: var(--text-secondary); font: inherit;
+    width: 1.8em; height: 1.8em; cursor: pointer; line-height: 1;
+  }
+  .chartspanel-head button#chartsToggle:hover { border-color: var(--accent); color: var(--accent); }
+  .chartspanel-frame {
+    display: block; width: 100%; height: 80vh; border: none;
+    background: var(--bg);
+  }
+  .chartspanel-frame[hidden] { display: none; }
+
   .empty {
     padding: var(--sp-8); text-align: center; color: var(--text-muted); letter-spacing: .04em;
   }
@@ -412,6 +436,15 @@
 </div>
 
 <div class="chips" id="chips"></div>
+
+<section class="chartspanel" id="chartsPanel">
+  <div class="chartspanel-head" id="chartsHead">
+    <h3>on-chain metric charts</h3>
+    <span class="chartspanel-sub" id="chartsSub">one chart per column · interactive</span>
+    <button id="chartsToggle" type="button" aria-label="collapse charts">▾</button>
+  </div>
+  <iframe id="chartsFrame" class="chartspanel-frame" title="on-chain metric charts" loading="lazy"></iframe>
+</section>
 
 <details class="legend">
   <summary>▸ what does each column mean? (plain-English legend)</summary>
@@ -573,7 +606,7 @@
 </footer>
 
 <script type="module">
-import { parseCsv, detectDatadogMapping, parseDatadogCsvFiles } from './datadog_csv.mjs';
+import { parseCsv, detectDatadogMapping, parseDatadogCsvFiles, enrichRowsWithChainData } from './datadog_csv.mjs';
 
 const POLL_MS = 12000;           // one slot
 // inFlight: never let a second request start while one is outstanding. A slow
@@ -967,7 +1000,7 @@ function compactCounts(counts, limit = 5) {
     .join(', ') || '–';
 }
 
-function csvDebugStats(result) {
+function csvDebugStats(result, enrichedCount) {
   return `files <b>${result.stats.fileCount ?? 1}</b>` +
     ` · rows <b>${result.stats.totalRows}</b>` +
     ` · events <b>${result.stats.parsedEvents}</b>` +
@@ -975,12 +1008,60 @@ function csvDebugStats(result) {
     ` · time <b>${result.stats.minTimestamp ? result.stats.minTimestamp.slice(11, 19) : '–'}-${result.stats.maxTimestamp ? result.stats.maxTimestamp.slice(11, 19) : '–'}</b>` +
     ` · slots <b>${result.stats.minSlot ?? '–'}-${result.stats.maxSlot ?? '–'}</b>` +
     ` · table rows <b>${result.rows.length}</b>` +
+    (enrichedCount === null ? '' : ` · chain-enriched <b>${enrichedCount}/${result.rows.length}</b>`) +
     ` · services <b>${compactCounts(result.stats.serviceCounts, 3)}</b>` +
     ` · parsed <b>${compactCounts(result.stats.eventCounts, 5)}</b>`;
 }
 
-// Datadog tab is CSV-only by design: this must never call /api/diagnostics or
-// any other backend endpoint. Uploaded CSV is the sole source of truth.
+function chunkArray(arr, size) {
+  const out = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
+function chunkSlotRange(minSlot, maxSlot, size) {
+  const out = [];
+  for (let start = minSlot; start <= maxSlot; start += size + 1) {
+    out.push([start, Math.min(start + size, maxSlot)]);
+  }
+  return out;
+}
+
+// Exact-match-only chain-data lookup for the Datadog tab: query ONLY the specific
+// validator pubkeys/indices found in the CSV, over the CSV's own slot range. Never
+// a blanket "everything ClickHouse has for this slot range" query — that's what
+// let an identity-less CSV row pick up an arbitrary validator's data before.
+async function fetchChainDataForCsv(stats) {
+  if (stats.minSlot === null || stats.maxSlot === null) return [];
+  const idParam = stats.validatorPubkeys.length ? 'pubkeys'
+    : stats.validatorIndices.length ? 'validators'
+    : null;
+  if (!idParam) return []; // no validator identity anywhere in the CSV -> nothing to look up
+  const idValues = idParam === 'pubkeys' ? stats.validatorPubkeys : stats.validatorIndices;
+
+  const rows = [];
+  for (const [fromSlot, toSlot] of chunkSlotRange(stats.minSlot, stats.maxSlot, 8000)) {
+    for (const ids of chunkArray(idValues, 200)) {
+      const params = new URLSearchParams();
+      params.set('from_slot', fromSlot);
+      params.set('to_slot', toSlot);
+      params.set(idParam, ids.join(','));
+      const res = await fetch('/api/diagnostics?' + params.toString());
+      if (!res.ok) throw new Error('diagnostics HTTP ' + res.status);
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      rows.push(...data.rows);
+    }
+  }
+  return rows;
+}
+
+// Datadog tab: CSV is the source of truth for every row and every log-derived field.
+// It additionally does one exact-match (slot, validator_pubkey/validator_index) lookup
+// against the existing chain-data views (indexer/p2p_watch backed) to fill in
+// on-chain votes/inclusion/proposer/aggregation/propagation facts that logs alone can
+// never produce. A CSV row with no validator identity is never looked up or enriched —
+// see enrichRowsWithChainData in datadog_csv.mjs for the exact-match invariant.
 async function renderCsvWithMapping() {
   if (!csvFiles.length) return;
   const result = parseDatadogCsvFiles(csvFiles, {
@@ -988,13 +1069,27 @@ async function renderCsvWithMapping() {
     message: $('csvMessage').value,
     source: $('csvSource').value,
   });
-  csvRows = result.rows;
-  lastSlots = new Set();
-  renderRows(csvRows);
-  $('csvStats').innerHTML = csvDebugStats(result);
-  $('live').className = csvRows.length ? 'live stale' : 'live err';
-  $('livetext').textContent = csvRows.length ? 'CSV' : 'NO CSV ROWS';
-  $('updated').textContent = csvRows.length ? 'csv parsed (no ClickHouse data used)' : 'csv had no recognized rows';
+  try {
+    const chainRows = await fetchChainDataForCsv(result.stats);
+    csvRows = enrichRowsWithChainData(result.rows, chainRows);
+    const enrichedCount = csvRows.filter(r => r.chain_enriched).length;
+    lastSlots = new Set();
+    renderRows(csvRows);
+    $('csvStats').innerHTML = csvDebugStats(result, enrichedCount);
+    $('live').className = csvRows.length ? 'live stale' : 'live err';
+    $('livetext').textContent = csvRows.length ? (enrichedCount ? 'CSV+CHAIN' : 'CSV') : 'NO CSV ROWS';
+    $('updated').textContent = csvRows.length
+      ? `csv parsed, ${enrichedCount}/${csvRows.length} rows exact-match enriched from chain data`
+      : 'csv had no recognized rows';
+  } catch (e) {
+    csvRows = result.rows;
+    lastSlots = new Set();
+    renderRows(csvRows);
+    $('csvStats').innerHTML = csvDebugStats(result, null);
+    $('live').className = csvRows.length ? 'live stale' : 'live err';
+    $('livetext').textContent = csvRows.length ? 'CSV ONLY' : 'NO CSV ROWS';
+    $('updated').textContent = 'chain-data enrichment failed, showing csv-only rows: ' + e.message;
+  }
   $('next').textContent = 'csv preview';
 }
 
@@ -1024,6 +1119,25 @@ $('themeToggle').onclick = () => {
   localStorage.setItem('attmon-theme', next);
   $('themeToggle').textContent = themeLabel(next);
 };
+
+// Charts panel: an iframe onto the separate charts service, proxied through
+// this server at /charts so the browser only ever talks to :8080. Loaded
+// lazily (src set on first expand, not on page load) so a collapsed panel
+// costs nothing.
+(function initChartsPanel() {
+  const collapsed = localStorage.getItem('attmon-charts-collapsed') === '1';
+  $('chartsFrame').hidden = collapsed;
+  $('chartsToggle').textContent = collapsed ? '▸' : '▾';
+  if (!collapsed) $('chartsFrame').src = '/charts';
+})();
+$('chartsHead').onclick = () => {
+  const collapsed = !$('chartsFrame').hidden;
+  $('chartsFrame').hidden = collapsed;
+  $('chartsToggle').textContent = collapsed ? '▸' : '▾';
+  localStorage.setItem('attmon-charts-collapsed', collapsed ? '1' : '');
+  if (!collapsed && !$('chartsFrame').src) $('chartsFrame').src = '/charts';
+};
+
 $('epochs').onchange = refresh;
 $('epochFilter').onchange = refresh;
 $('slotFilter').onchange = refresh;

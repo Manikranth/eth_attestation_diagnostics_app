@@ -762,3 +762,59 @@ export function parseDatadogCsvFiles(files, overrides = {}) {
     },
   };
 }
+
+// Fields the chain-data lookup is allowed to fill: on-chain votes/inclusion/proposer/
+// exec-block facts and P2P propagation/aggregation info that logs alone can never
+// produce. Anything the CSV/logs already derived (e.g. block_on_chain from an HTTP
+// access-log line, sync_state, block_seen_ms) is never touched here.
+const CHAIN_ONLY_FIELDS = [
+  'validator_name', 'block_on_chain', 'proposer_index', 'exec_block_number',
+  'current_head_exec_block', 'head_correct', 'target_correct', 'source_correct',
+  'inclusion_slot', 'inclusion_distance', 'included_in_aggregate', 'missed',
+  'committee_index', 'committee_position', 'agg_bits_set', 'subnet_id',
+  'propagation_delay_ms', 'aggregator_picked', 'graffiti', 'blob_count', 'head_lag_slots',
+];
+
+function isNullish(value) {
+  return value === null || value === undefined;
+}
+
+function hasIdentity(row) {
+  return !isNullish(row.validator_index) || Boolean(row.validator_pubkey);
+}
+
+function findExactChainMatch(csvRow, chainRows) {
+  return chainRows.find(chainRow => {
+    if (Number(chainRow.slot) !== Number(csvRow.slot)) return false;
+    if (!isNullish(csvRow.validator_index)) {
+      return Number(chainRow.validator_index) === Number(csvRow.validator_index);
+    }
+    if (csvRow.validator_pubkey) {
+      return chainRow.validator_pubkey === csvRow.validator_pubkey;
+    }
+    return false;
+  });
+}
+
+// Exact-match-only chain-data enrichment: a CSV row with no validator identity is
+// NEVER enriched, even when a chain row exists for the exact same slot. That is the
+// direct fix for the earlier bug where an identity-less row picked up an arbitrary
+// validator's ClickHouse data just because it shared a slot.
+export function enrichRowsWithChainData(csvRows, chainRows) {
+  return csvRows.map(csvRow => {
+    if (!hasIdentity(csvRow)) {
+      return { ...csvRow, chain_enriched: false };
+    }
+    const match = findExactChainMatch(csvRow, chainRows);
+    if (!match) {
+      return { ...csvRow, chain_enriched: false };
+    }
+    const row = { ...csvRow, chain_enriched: true };
+    for (const field of CHAIN_ONLY_FIELDS) {
+      if (isNullish(row[field]) && !isNullish(match[field])) {
+        row[field] = match[field];
+      }
+    }
+    return row;
+  });
+}
