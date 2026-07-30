@@ -75,6 +75,24 @@ class ValidatorDiscoveryTest(unittest.TestCase):
         self.assertIn('"validator_name": "validator-22"', payload[0])
         self.assertIn('"validator_index": 33', payload[1])
 
+    def test_process_epoch_does_not_store_batch_head_as_slot_head(self):
+        validators = {
+            22: {"pubkey": "0x22", "name": "validator-22"},
+        }
+        committees = {
+            320: {7: [22, 44]},
+        }
+
+        with patch.object(indexer, "get_committees", return_value=committees), \
+             patch.object(indexer, "canonical_root_at", return_value="0xroot"), \
+             patch.object(indexer, "get_block_attestations", return_value=None), \
+             patch.object(indexer, "get_block_facts", return_value={}), \
+             patch.object(indexer, "ch_query") as ch_query:
+            indexer.process_epoch(10, 0, validators)
+
+        payload = ch_query.call_args.kwargs["data"]
+        self.assertNotIn("current_head_exec_block", payload)
+
     def test_discovers_pubkeys_from_local_validator_log_when_clickhouse_empty(self):
         log_data = (
             'Jul 19 18:32:14.454 INFO  Enabled validator '

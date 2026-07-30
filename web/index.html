@@ -420,7 +420,7 @@
       <h4 class="info">INFORMATION — what happened</h4>
       <dl>
         <dt>on chain</dt><dd>did a block actually land at your duty slot</dd>
-        <dt>exec block# / current head#</dt><dd>the duty-slot block's execution number, and the execution block the node currently considers head (how caught-up it is).</dd>
+        <dt>exec block# / current head#</dt><dd>the duty-slot block's execution number, and the execution block corresponding to the node's head at the slot tick.</dd>
         <dt>head lag</dt><dd>how many slots behind your duty slot the block you voted for was. 0 is ideal.</dd>
         <dt>head / tgt / src</dt><dd>were your head, target and source votes correct. <b>–</b> means unknown — the node was still syncing, so we don't guess (this is the fix for the old false ✓).</dd>
         <dt>incl slot / dist</dt><dd>which slot included your vote, and how far after your duty slot that was (1 = ideal).</dd>
@@ -500,7 +500,7 @@
         <!-- INFORMATION -->
         <th>epoch</th><th>slot</th><th>slot window</th><th>validator</th><th>name</th>
         <th class="groupedge">on chain</th><th>proposer</th><th>exec block#</th>
-        <th title="EL block number the node considered head at duty time — how caught-up the node was">current head#</th>
+        <th title="Execution block for the beacon-node head slot at the local slot tick">current head#</th>
         <th title="how many slots behind the duty slot your attested head was (0 = ideal)">head lag</th>
         <th>blobs</th><th>graffiti</th>
         <th class="groupedge" title="did you vote for the correct head block? – = unknown while node syncing">head</th>
@@ -627,7 +627,7 @@ const COLUMN_HELP = {
   'on chain': 'Whether a block exists at this duty slot.',
   'proposer': 'Validator index that proposed the duty-slot block.',
   'exec block#': 'Execution-layer block number inside the duty-slot block.',
-  'current head#': 'Execution block number your node considered head around duty time. Useful for spotting a lagging EL/node.',
+  'current head#': 'Execution block number for the beacon-node head slot at the local slot timer tick. Derived from head@tick, not from a later indexer poll.',
   'head lag': 'Duty slot minus the block slot you voted as head. 0 is ideal; higher means you attested to an older head.',
   'blobs': 'Number of blob KZG commitments in the duty-slot block.',
   'graffiti': 'Block graffiti from the proposer, truncated in the table.',

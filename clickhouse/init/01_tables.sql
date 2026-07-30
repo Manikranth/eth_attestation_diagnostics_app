@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS attmon.chain_attestations
     block_on_chain        Nullable(UInt8),      -- did a block land at the duty slot
     proposer_index        Nullable(UInt64),
     exec_block_number     Nullable(UInt64),     -- execution-layer block number of the duty-slot block
-    current_head_exec_block Nullable(UInt64),   -- EL block# the node considered head at duty time
+    current_head_exec_block Nullable(UInt64),   -- legacy nullable; diagnostics derives slot-time head from logs
     exec_block_hash       String DEFAULT '',
     state_root            String DEFAULT '',
     graffiti              String DEFAULT '',
@@ -299,7 +299,7 @@ SELECT
     c.block_on_chain        AS block_on_chain,
     c.proposer_index        AS proposer_index,
     c.exec_block_number     AS exec_block_number,
-    c.current_head_exec_block AS current_head_exec_block,
+    h.head_exec_block       AS current_head_exec_block,
     c.graffiti              AS graffiti,
     c.blob_count            AS blob_count,
     c.head_lag_slots        AS head_lag_slots,
@@ -404,6 +404,15 @@ SELECT
     ) AS fault_attribution
 FROM attmon.chain_attestations AS c FINAL
 LEFT JOIN attmon.slot_timeline AS t ON t.slot = c.slot
+LEFT JOIN
+(
+    SELECT
+        slot,
+        any(exec_block_number) AS head_exec_block
+    FROM attmon.chain_attestations FINAL
+    WHERE exec_block_number IS NOT NULL
+    GROUP BY slot
+) AS h ON h.slot = t.head_slot_at_tick
 LEFT JOIN attmon.p2p_attestations AS p FINAL
     ON p.slot = c.slot AND p.validator_index = c.validator_index
 SETTINGS join_use_nulls = 1;

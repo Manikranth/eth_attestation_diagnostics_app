@@ -88,6 +88,7 @@ gaps intended to be compared or summed.
 | `on chain` | beacon API | Whether a block exists at the duty slot. |
 | `proposer` | beacon API | Validator index that proposed the duty-slot block. |
 | `exec block#` | beacon API | Execution-layer block number for the duty-slot block. |
+| `current head#` | Lighthouse logs + beacon API | Execution-layer block number for the beacon node's `head@tick` slot. Blank when the slot-timer head cannot be mapped to an indexed block. |
 | `blobs` | beacon API | Number of blob KZG commitments in the duty-slot block. |
 | `graffiti` | beacon API | Block graffiti, truncated in the UI. |
 | `cmte` | beacon API | Attestation committee index. |
@@ -100,7 +101,7 @@ gaps intended to be compared or summed.
 | `dist` | chain indexer | Inclusion distance: `incl slot - duty slot`. `1` is ideal. |
 | `missed` | chain indexer | `YES` when the attestation never appeared on chain. |
 | `head@tick` | Lighthouse logs | Beacon node head slot at the local slot timer tick. |
-| `behind` | Lighthouse logs | Duty slot minus `head@tick`; shows how far the local node was behind. |
+| `behind` | Lighthouse logs | Duty slot minus `head@tick`; use this as the slot-level node lag. |
 | `sync` | Lighthouse logs | Lighthouse sync state at the slot timer tick. |
 | `seen` | Lighthouse logs | Offset from slot start when the block was first seen and verified on gossip. |
 | `late by` | Lighthouse logs | Lighthouse's late-block delay duration, only present when Lighthouse logged a late block. |

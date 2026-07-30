@@ -368,22 +368,6 @@ def get_block_facts(slot):
     return facts
 
 
-def get_head_exec_block_number():
-    """Execution-layer block number the node currently considers head. Shows how
-    caught-up the node was at duty time. None if the head block/payload can't be
-    read (EL still syncing)."""
-    try:
-        blk = beacon_get("/eth/v2/beacon/blocks/head", ok_404=True)
-        if blk is None:
-            return None
-        payload = blk["data"]["message"]["body"].get("execution_payload", {})
-        if payload and payload.get("block_number") is not None:
-            return int(payload["block_number"])
-    except Exception as e:
-        log.warning("could not read head exec block number (%s)", e)
-    return None
-
-
 def slot_of_root(root):
     """Slot of a block root, or None if unknown."""
     if not root:
@@ -405,7 +389,7 @@ def canonical_root_at(slot, floor_slot=0):
 
 # --- Epoch processing -----------------------------------------------------
 
-def process_epoch(epoch, genesis_time, validators, trustworthy=True, head_exec_block=None):
+def process_epoch(epoch, genesis_time, validators, trustworthy=True):
     committees = get_committees(epoch)
     validator_indices = set(validators)
 
@@ -465,7 +449,6 @@ def process_epoch(epoch, genesis_time, validators, trustworthy=True, head_exec_b
             "canonical_head_root": canonical_head,
             "subnet_id": subnet_for(duty_slot, ci, committees_per_slot),
             "committee_size": committee_sizes.get(ci),
-            "current_head_exec_block": head_exec_block,
         }
         row.update(get_block_facts(duty_slot))
         if found:
@@ -574,7 +557,6 @@ def main():
             log.info("monitoring validators from logs: %s", sorted(validators))
             target = get_target_epoch()
             trustworthy = not node_is_optimistic()
-            head_exec_block = get_head_exec_block_number()
             done = last_processed_epoch(validators)
             start_new = (done + 1) if done else max(target - BACKFILL_EPOCHS + 1, 0)
             # Forward: every not-yet-processed epoch.
@@ -594,7 +576,7 @@ def main():
                 target, trustworthy, len(todo),
             )
             for epoch in sorted(todo):
-                process_epoch(epoch, genesis_time, validators, trustworthy, head_exec_block)
+                process_epoch(epoch, genesis_time, validators, trustworthy)
         except Exception:
             log.exception("epoch processing failed; retrying next poll")
         time.sleep(POLL_SECONDS)
