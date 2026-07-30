@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
+import * as datadogCsv from './datadog_csv.mjs';
 import {
   parseCsv,
   detectDatadogMapping,
-  mergeDiagnosticsRows,
   parseDatadogCsv,
   parseDatadogCsvFiles,
 } from './datadog_csv.mjs';
@@ -174,57 +174,289 @@ test('parseDatadogCsv maps signer pubkey and signer latency', () => {
   assert.equal(second.vc_publish_dur_ms, 77);
 });
 
-test('mergeDiagnosticsRows keeps ClickHouse facts and fills blanks from CSV logs', () => {
-  const clickhouseRows = [{
-    slot: '3590633',
-    validator_index: 12345,
-    validator_pubkey: '0xabc',
-    inclusion_distance: 1,
-    fault_attribution: 'perfect',
-    block_seen_ms: null,
-    peers: null,
-  }];
-  const csvRows = [{
-    slot: 3590633,
-    validator_index: 12345,
-    validator_pubkey: '',
-    inclusion_distance: null,
-    fault_attribution: 'log_preview',
-    block_seen_ms: 1339,
-    peers: 200,
-  }];
-
-  const merged = mergeDiagnosticsRows(clickhouseRows, csvRows);
-
-  assert.equal(merged.length, 1);
-  assert.equal(merged[0].validator_index, 12345);
-  assert.equal(merged[0].inclusion_distance, 1);
-  assert.equal(merged[0].fault_attribution, 'perfect');
-  assert.equal(merged[0].block_seen_ms, 1339);
-  assert.equal(merged[0].peers, 200);
+test('datadog_csv.mjs no longer exports any ClickHouse-merge function (Datadog tab must be CSV-only)', () => {
+  assert.equal('mergeDiagnosticsRows' in datadogCsv, false);
+  assert.equal('csvMatchesClickhouseRow' in datadogCsv, false);
+  assert.equal('mergeOneCsvRow' in datadogCsv, false);
 });
 
-test('mergeDiagnosticsRows does not render ClickHouse-only rows when CSV identity differs', () => {
-  const clickhouseRows = [{
-    slot: 3590633,
-    validator_index: 99999,
-    validator_pubkey: '0xchain',
-    inclusion_distance: 1,
-    fault_attribution: 'perfect',
-  }];
-  const csvRows = [{
-    slot: 3590633,
-    validator_index: 12345,
-    validator_pubkey: '',
-    att_failures: 1,
-    fault_attribution: 'vc_head_event_failed',
-  }];
+test('parseDatadogCsv/parseDatadogCsvFiles never perform network I/O (no ClickHouse leakage possible)', async () => {
+  const originalFetch = globalThis.fetch;
+  let fetchCalled = false;
+  globalThis.fetch = () => {
+    fetchCalled = true;
+    throw new Error('parseDatadogCsv must never call fetch');
+  };
+  try {
+    const csv = [
+      'Date,Host,Service,Content',
+      '2026-07-29T04:56:37.339Z,redacted-host,eth-staking,"INFO New block received slot: 3590633, root: 0x1234abcd"',
+    ].join('\n');
+    parseDatadogCsv(csv);
+    parseDatadogCsvFiles([{ name: 'a.csv', text: csv }]);
+    assert.equal(fetchCalled, false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
 
-  const merged = mergeDiagnosticsRows(clickhouseRows, csvRows);
+test('parseDatadogCsv extracts epoch/finalized_epoch/exec_hash from Synced peers line', () => {
+  const csv = [
+    'Date,Host,Service,Content',
+    '2026-07-29T06:50:26.000Z,redacted-host,eth-staking,"INFO Synced peers: ""195"", exec_hash: ""0xdeadbeef (verified)"", finalized_epoch: 112223, epoch: 112225, slot: 3591201"',
+  ].join('\n');
 
-  assert.equal(merged.length, 1);
-  assert.equal(merged[0].validator_index, 12345);
-  assert.equal(merged[0].fault_attribution, 'vc_head_event_failed');
+  const result = parseDatadogCsv(csv);
+
+  assert.equal(result.stats.parsedEvents, 1);
+  const row = result.rows.find(r => r.slot === 3591201);
+  assert.equal(row.peers, 195);
+  assert.equal(row.sync_state, 'Synced');
+  assert.equal(row.epoch, 112225);
+});
+
+test('parseDatadogCsv derives block_on_chain=true from a 200 beacon blocks access-log line', () => {
+  const csv = [
+    'Date,Host,Service,Content',
+    '2026-07-29T06:50:26.000Z,redacted-host,eth-staking,"1.2.3.4 - - [29/Jul/2026:06:50:26 +0000] ""GET /eth/v2/beacon/blocks/3349629 HTTP/1.1"" 200 186350 ""-"" ""-"" ""-"""',
+  ].join('\n');
+
+  const result = parseDatadogCsv(csv);
+
+  assert.equal(result.stats.parsedEvents, 1);
+  const row = result.rows.find(r => r.slot === 3349629);
+  assert.ok(row, 'expected a row for slot 3349629');
+  assert.equal(row.block_on_chain, true);
+});
+
+test('parseDatadogCsv derives missed=true from a 404 beacon blocks access-log line', () => {
+  const csv = [
+    'Date,Host,Service,Content',
+    '2026-07-29T06:50:11.000Z,redacted-host,eth-staking,"1.2.3.4 - - [29/Jul/2026:06:50:11 +0000] ""GET /eth/v2/beacon/blocks/3349600 HTTP/1.1"" 404 81 ""-"" ""-"" ""-"""',
+  ].join('\n');
+
+  const result = parseDatadogCsv(csv);
+
+  assert.equal(result.stats.parsedEvents, 1);
+  const row = result.rows.find(r => r.slot === 3349600);
+  assert.ok(row, 'expected a row for slot 3349600');
+  assert.equal(row.missed, true);
+  assert.equal(row.block_on_chain, null);
+});
+
+test('parseDatadogCsv derives missed=true from a WARN 404 Not Found line for a blocks path', () => {
+  const csv = [
+    'Date,Host,Service,Content',
+    '2026-07-29T06:50:11.000Z,redacted-host,eth-staking,"WARN Error processing HTTP API request elapsed_ms: 12.268008, status: 404 Not Found, path: /eth/v2/beacon/blocks/3349609, method: GET"',
+  ].join('\n');
+
+  const result = parseDatadogCsv(csv);
+
+  assert.equal(result.stats.parsedEvents, 1);
+  const row = result.rows.find(r => r.slot === 3349609);
+  assert.ok(row, 'expected a row for slot 3349609');
+  assert.equal(row.missed, true);
+});
+
+test('parseDatadogCsv extracts slot+committee_index from an attestation_data query', () => {
+  const csv = [
+    'Date,Host,Service,Content',
+    '2026-07-29T06:50:26.000Z,redacted-host,eth-staking,"GET /eth/v1/validator/attestation_data?slot=3591202&committee_index=0"',
+  ].join('\n');
+
+  const result = parseDatadogCsv(csv);
+
+  assert.equal(result.stats.parsedEvents, 1);
+  const row = result.rows.find(r => r.slot === 3591202);
+  assert.ok(row, 'expected a row for slot 3591202');
+  assert.equal(row.committee_index, 0);
+});
+
+test('parseDatadogCsv extracts exec_block_number from geth chain-head-updated JSON', () => {
+  const csv = [
+    'Date,Host,Service,Content',
+    '2026-07-29T06:50:26.000Z,redacted-host,eth-staking,"{""msg"":""Chain head was updated"",""height"":3309408,""hash"":""0xexechash""}"',
+  ].join('\n');
+
+  const result = parseDatadogCsv(csv);
+
+  assert.equal(result.stats.parsedEvents, 1);
+  assert.equal(result.rows.length, 1);
+  assert.equal(result.rows[0].exec_block_number, 3309408);
+});
+
+test('parseDatadogCsv recognizes VC status lines with no slot as identity-less, timestamp-derived rows', () => {
+  const csv = [
+    'Date,Host,Service,Content',
+    '2026-07-29T05:51:06.001Z,redacted-host,eth-staking-validator,"Connected to beacon node(s)"',
+    '2026-07-29T05:51:07.001Z,redacted-host,eth-staking-validator,"Listening for doppelgangers"',
+    '2026-07-29T05:51:08.001Z,redacted-host,eth-staking-validator,"Some validators active"',
+  ].join('\n');
+
+  const result = parseDatadogCsv(csv);
+
+  assert.equal(result.stats.parsedEvents, 3);
+  assert.equal(result.stats.eventCounts.vc_connected, 1);
+  assert.equal(result.stats.eventCounts.doppelganger_watch, 1);
+  assert.equal(result.stats.eventCounts.validators_active, 1);
+  // no literal slot in any of these lines -> slot must be derived from timestamp, never left null
+  for (const row of result.rows) {
+    assert.ok(Number.isInteger(row.slot));
+  }
+});
+
+test('parseDatadogCsv handles an empty CSV without crashing', () => {
+  const result = parseDatadogCsv('');
+  assert.equal(result.stats.totalRows, 0);
+  assert.equal(result.stats.parsedEvents, 0);
+  assert.deepEqual(result.rows, []);
+});
+
+test('parseDatadogCsv handles a CSV with no recognizable message/timestamp headers', () => {
+  const csv = [
+    'foo,bar,baz',
+    '1,2,3',
+    '4,5,6',
+  ].join('\n');
+
+  const result = parseDatadogCsv(csv);
+
+  assert.equal(result.mapping.message, '');
+  assert.equal(result.stats.totalRows, 2);
+  assert.equal(result.stats.parsedEvents, 0);
+  assert.equal(result.stats.ignoredRows, 2);
+  assert.deepEqual(result.rows, []);
+});
+
+test('parseDatadogCsv drops a row with a malformed timestamp and no literal slot, without crashing', () => {
+  const csv = [
+    'Date,Host,Service,Content',
+    'not-a-real-timestamp,redacted-host,eth-staking-validator,"Connected to beacon node(s)"',
+  ].join('\n');
+
+  assert.doesNotThrow(() => parseDatadogCsv(csv));
+  const result = parseDatadogCsv(csv);
+  assert.equal(result.stats.totalRows, 1);
+  assert.equal(result.stats.parsedEvents, 0);
+  assert.equal(result.stats.ignoredRows, 1);
+});
+
+test('parseDatadogCsv leaves validator_index/validator_pubkey null (not undefined) when identity is absent', () => {
+  const csv = [
+    'Date,Host,Service,Content',
+    '2026-07-29T06:50:26.000Z,redacted-host,eth-staking,"INFO New block received slot: 3591300, root: 0xdeadbeef"',
+  ].join('\n');
+
+  const result = parseDatadogCsv(csv);
+  const row = result.rows.find(r => r.slot === 3591300);
+  assert.ok(row);
+  assert.equal(row.validator_index, null);
+  assert.equal(row.validator_pubkey, '');
+  for (const [key, value] of Object.entries(row)) {
+    assert.notEqual(value, undefined, `field ${key} must be null, not undefined, when unavailable`);
+  }
+});
+
+test('parseDatadogCsv counts duplicate identical log lines without crashing or silently dropping them', () => {
+  const csv = [
+    'Date,Host,Service,Content',
+    '2026-07-29T05:18:38.619Z,redacted-host,eth-staking-validator,"Failed to attest based on head event validators: [""12345""]"',
+    '2026-07-29T05:18:38.619Z,redacted-host,eth-staking-validator,"Failed to attest based on head event validators: [""12345""]"',
+  ].join('\n');
+
+  const result = parseDatadogCsv(csv);
+  assert.equal(result.stats.parsedEvents, 2);
+  assert.equal(result.rows.length, 1);
+  assert.equal(result.rows[0].att_failures, 2);
+});
+
+test('parseDatadogCsv aggregates multiple distinct log patterns for one slot into a single row', () => {
+  const csv = [
+    'Date,Host,Service,Content',
+    '2026-07-29T06:50:24.000Z,redacted-host,eth-staking,"INFO New block received slot: 3591400, root: 0xfeedface"',
+    '2026-07-29T06:50:25.000Z,redacted-host,eth-staking,"INFO Synced peers: ""150"", exec_hash: ""0xaaaa (verified)"", finalized_epoch: 112300, epoch: 112301, slot: 3591400"',
+    '2026-07-29T06:50:26.000Z,redacted-host,eth-staking,"1.2.3.4 - - [29/Jul/2026:06:50:26 +0000] ""GET /eth/v2/beacon/blocks/3591400 HTTP/1.1"" 200 100000 ""-"" ""-"" ""-"""',
+  ].join('\n');
+
+  const result = parseDatadogCsv(csv);
+  assert.equal(result.stats.parsedEvents, 3);
+  assert.equal(result.rows.length, 1);
+  const row = result.rows[0];
+  assert.equal(row.block_root, '0xfeedface');
+  assert.equal(row.peers, 150);
+  assert.equal(row.sync_state, 'Synced');
+  assert.equal(row.epoch, 112301);
+  assert.equal(row.block_on_chain, true);
+});
+
+test('parseDatadogCsv produces separate rows for multiple distinct validators in the same slot', () => {
+  const csv = [
+    'Date,Host,Service,Content',
+    '2026-07-29T05:18:38.000Z,redacted-host,eth-staking-validator,"Successfully published attestation, slot: 3591500, committee_index: 1, voting_pubkey: ""0xaaaa000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"""',
+    '2026-07-29T05:18:38.500Z,redacted-host,eth-staking-validator,"Successfully published attestation, slot: 3591500, committee_index: 2, voting_pubkey: ""0xbbbb000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"""',
+  ].join('\n');
+
+  const result = parseDatadogCsv(csv);
+  const rowsForSlot = result.rows.filter(r => r.slot === 3591500);
+  assert.equal(rowsForSlot.length, 2);
+  const pubkeys = rowsForSlot.map(r => r.validator_pubkey).sort();
+  assert.deepEqual(pubkeys, [
+    '0xaaaa000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000',
+    '0xbbbb000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000',
+  ]);
+});
+
+test('parseDatadogCsv produces identical results regardless of row order (out-of-order timestamps)', () => {
+  const inOrder = [
+    'Date,Host,Service,Content',
+    '2026-07-29T05:18:38.000Z,redacted-host,eth-staking-validator,"Starting attestation production, slot: 3591600, voting_pubkey: ""0xcccc000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"""',
+    '2026-07-29T05:18:38.500Z,redacted-host,eth-staking-validator,"Successfully published attestation, slot: 3591600, committee_index: 3, voting_pubkey: ""0xcccc000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"""',
+  ].join('\n');
+  const outOfOrder = [
+    'Date,Host,Service,Content',
+    '2026-07-29T05:18:38.500Z,redacted-host,eth-staking-validator,"Successfully published attestation, slot: 3591600, committee_index: 3, voting_pubkey: ""0xcccc000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"""',
+    '2026-07-29T05:18:38.000Z,redacted-host,eth-staking-validator,"Starting attestation production, slot: 3591600, voting_pubkey: ""0xcccc000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"""',
+  ].join('\n');
+
+  const a = parseDatadogCsv(inOrder).rows[0];
+  const b = parseDatadogCsv(outOfOrder).rows[0];
+  assert.equal(a.att_start_ms, b.att_start_ms);
+  assert.equal(a.total_attestation_lifecycle_ms, b.total_attestation_lifecycle_ms);
+});
+
+test('parseDatadogCsv keeps an outlier/out-of-window slot as its own isolated row, not merged into a nearby slot', () => {
+  const csv = [
+    'Date,Host,Service,Content',
+    '2026-07-29T06:50:24.000Z,redacted-host,eth-staking,"INFO New block received slot: 3591700, root: 0x1111"',
+    // an outlier far in the future relative to the main cluster above
+    '2026-07-29T09:00:00.000Z,redacted-host,eth-staking,"INFO New block received slot: 3592350, root: 0x2222"',
+  ].join('\n');
+
+  const result = parseDatadogCsv(csv);
+  assert.equal(result.rows.length, 2);
+  const slots = result.rows.map(r => r.slot).sort((x, y) => x - y);
+  assert.deepEqual(slots, [3591700, 3592350]);
+});
+
+test('parseDatadogCsv represents the complete set of distinct slots found in a larger CSV (no silent row loss)', () => {
+  const lines = ['Date,Host,Service,Content'];
+  const baseSlot = 3600000;
+  for (let i = 0; i < 500; i++) {
+    const slot = baseSlot + i;
+    const ts = new Date(1742213400000 + slot * 12000).toISOString();
+    lines.push(`${ts},redacted-host,eth-staking,"INFO New block received slot: ${slot}, root: 0xabc${i}"`);
+  }
+  const csv = lines.join('\n');
+
+  const start = Date.now();
+  const result = parseDatadogCsv(csv);
+  const elapsedMs = Date.now() - start;
+
+  assert.equal(result.stats.parsedEvents, 500);
+  assert.equal(result.rows.length, 500);
+  const slots = new Set(result.rows.map(r => r.slot));
+  for (let i = 0; i < 500; i++) assert.ok(slots.has(baseSlot + i), `missing row for slot ${baseSlot + i}`);
+  assert.ok(elapsedMs < 5000, `parsing 500 rows took too long: ${elapsedMs}ms`);
 });
 
 test('parseDatadogCsvFiles combines separate BN and VC exports into one slot window', () => {

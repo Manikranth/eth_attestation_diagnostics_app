@@ -565,7 +565,7 @@
 </footer>
 
 <script type="module">
-import { parseCsv, detectDatadogMapping, mergeDiagnosticsRows, parseDatadogCsvFiles } from './datadog_csv.mjs';
+import { parseCsv, detectDatadogMapping, parseDatadogCsvFiles } from './datadog_csv.mjs';
 
 const POLL_MS = 12000;           // one slot
 // inFlight: never let a second request start while one is outstanding. A slow
@@ -764,7 +764,10 @@ function renderRows(rows) {
     frag.push(`<tr${fresh ? ' class="fresh"' : ''}>` +
       // ===== INFORMATION =====
       // CHAIN
-      numCell(r.epoch) + numCell(r.slot) +
+      numCell(r.epoch) +
+      (r.slot === null || r.slot === undefined
+        ? numCell(r.slot)
+        : `<td title="${r.slot_source === 'derived' ? 'derived from timestamp, not present as a literal slot number in the CSV' : 'slot number read directly from the CSV log line'}">${r.slot}${r.slot_source === 'derived' ? '<span class="dim">*</span>' : ''}</td>`) +
       `<td class="dim">${(r.slot_start_utc || '').replace('T',' ')}</td>` +
       numCell(r.validator_index) +
       txtCell(r.validator_name || r.validator_pubkey, false, 18) +
@@ -924,32 +927,20 @@ function compactCounts(counts, limit = 5) {
     .join(', ') || '–';
 }
 
-function csvDebugStats(result, diagnosticsRows, tableRows) {
+function csvDebugStats(result) {
   return `files <b>${result.stats.fileCount ?? 1}</b>` +
     ` · rows <b>${result.stats.totalRows}</b>` +
     ` · events <b>${result.stats.parsedEvents}</b>` +
     ` · ignored <b>${result.stats.ignoredRows}</b>` +
     ` · time <b>${result.stats.minTimestamp ? result.stats.minTimestamp.slice(11, 19) : '–'}-${result.stats.maxTimestamp ? result.stats.maxTimestamp.slice(11, 19) : '–'}</b>` +
     ` · slots <b>${result.stats.minSlot ?? '–'}-${result.stats.maxSlot ?? '–'}</b>` +
-    ` · csv slot rows <b>${result.rows.length}</b>` +
-    ` · clickhouse slot rows <b>${diagnosticsRows}</b>` +
-    ` · table rows <b>${tableRows}</b>` +
+    ` · table rows <b>${result.rows.length}</b>` +
     ` · services <b>${compactCounts(result.stats.serviceCounts, 3)}</b>` +
     ` · parsed <b>${compactCounts(result.stats.eventCounts, 5)}</b>`;
 }
 
-async function fetchCsvDiagnostics(stats) {
-  if (stats.minSlot === null || stats.maxSlot === null) return [];
-  const params = new URLSearchParams();
-  params.set('from_slot', stats.minSlot);
-  params.set('to_slot', stats.maxSlot);
-  const res = await fetch('/api/diagnostics?' + params.toString());
-  if (!res.ok) throw new Error('diagnostics HTTP ' + res.status);
-  const data = await res.json();
-  if (data.error) throw new Error(data.error);
-  return data.rows;
-}
-
+// Datadog tab is CSV-only by design: this must never call /api/diagnostics or
+// any other backend endpoint. Uploaded CSV is the sole source of truth.
 async function renderCsvWithMapping() {
   if (!csvFiles.length) return;
   const result = parseDatadogCsvFiles(csvFiles, {
@@ -957,27 +948,13 @@ async function renderCsvWithMapping() {
     message: $('csvMessage').value,
     source: $('csvSource').value,
   });
-  $('live').className = 'live stale';
-  $('livetext').textContent = 'CSV QUERY';
-  $('updated').textContent = 'loading ClickHouse diagnostics for csv slots';
-  try {
-    const diagnosticsRows = await fetchCsvDiagnostics(result.stats);
-    csvRows = mergeDiagnosticsRows(diagnosticsRows, result.rows);
-    lastSlots = new Set();
-    renderRows(csvRows);
-    $('csvStats').innerHTML = csvDebugStats(result, diagnosticsRows.length, csvRows.length);
-    $('live').className = csvRows.length ? 'live stale' : 'live err';
-    $('livetext').textContent = csvRows.length ? 'CSV+CH' : 'NO CSV ROWS';
-    $('updated').textContent = csvRows.length ? 'csv enriched from ClickHouse diagnostics' : 'csv had no recognized rows and no diagnostics matches';
-  } catch (e) {
-    csvRows = result.rows;
-    lastSlots = new Set();
-    renderRows(csvRows);
-    $('csvStats').innerHTML = csvDebugStats(result, 'error', csvRows.length);
-    $('live').className = csvRows.length ? 'live stale' : 'live err';
-    $('livetext').textContent = csvRows.length ? 'CSV ONLY' : 'NO CSV ROWS';
-    $('updated').textContent = 'ClickHouse enrichment failed: ' + e.message;
-  }
+  csvRows = result.rows;
+  lastSlots = new Set();
+  renderRows(csvRows);
+  $('csvStats').innerHTML = csvDebugStats(result);
+  $('live').className = csvRows.length ? 'live stale' : 'live err';
+  $('livetext').textContent = csvRows.length ? 'CSV' : 'NO CSV ROWS';
+  $('updated').textContent = csvRows.length ? 'csv parsed (no ClickHouse data used)' : 'csv had no recognized rows';
   $('next').textContent = 'csv preview';
 }
 

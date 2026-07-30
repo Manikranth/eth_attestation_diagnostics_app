@@ -148,12 +148,78 @@ function extractSignerLatency(raw) {
   return null;
 }
 
+function tryParseJsonMessage(raw) {
+  const trimmed = (raw || '').trim();
+  if (!trimmed.startsWith('{')) return null;
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return null;
+  }
+}
+
+function applyHttpRequest(event, method, rawPath, status, bytes) {
+  event.http_method = method || null;
+  event.http_status = status === null || status === undefined ? null : Number(status);
+  event.http_bytes = bytes === null || bytes === undefined ? null : Number(bytes);
+
+  let pathname = rawPath || '';
+  let searchParams = new URLSearchParams();
+  try {
+    const u = new URL(pathname, 'http://placeholder');
+    pathname = u.pathname;
+    searchParams = u.searchParams;
+  } catch {
+    // leave pathname/searchParams as-is if it doesn't parse as a URL
+  }
+
+  let m;
+  if ((m = pathname.match(/^\/eth\/v[12]\/beacon\/blocks\/(\d+)$/))) {
+    event.event = 'beacon_blocks_request';
+    event.slot = Number(m[1]);
+  } else if ((m = pathname.match(/^\/eth\/v1\/beacon\/headers\/(\d+)$/))) {
+    event.event = 'beacon_headers_request';
+    event.slot = Number(m[1]);
+  } else if (pathname === '/eth/v1/validator/attestation_data') {
+    event.event = 'att_data_request';
+    const s = searchParams.get('slot');
+    const c = searchParams.get('committee_index');
+    if (s !== null) event.slot = Number(s);
+    if (c !== null) event.committee_index = Number(c);
+  } else if ((m = pathname.match(/^\/eth\/v[12]\/validator\/duties\/attester\/(\d+)$/))) {
+    event.event = 'duties_attester_request';
+    event.epoch = Number(m[1]);
+  } else if ((m = pathname.match(/^\/eth\/v[12]\/validator\/duties\/proposer\/(\d+)$/))) {
+    event.event = 'duties_proposer_request';
+    event.epoch = Number(m[1]);
+  } else if (pathname === '/eth/v1/validator/beacon_committee_subscriptions') {
+    event.event = 'committee_subscription';
+  } else if (pathname === '/eth/v1/validator/prepare_beacon_proposer') {
+    event.event = 'prepare_proposer';
+  } else if (/^\/eth\/v[12]\/beacon\/pool\/attestations$/.test(pathname)) {
+    event.event = 'pool_attestations_submit';
+  } else if (
+    pathname === '/eth/v1/node/syncing' ||
+    pathname === '/eth/v1/node/version' ||
+    pathname === '/eth/v1/config/spec'
+  ) {
+    event.event = 'node_info_request';
+  } else {
+    event.event = 'http_other';
+  }
+}
+
+const HTTP_ACCESS_LOG_RE = /"(GET|POST|PUT|DELETE) ([^\s"]+) HTTP\/[0-9.]+" (\d{3}) (\d+)/;
+const HTTP_WARN_RE = /^WARN Error processing HTTP API request/;
+const HTTP_PLAIN_REQUEST_RE = /^(GET|POST|PUT|DELETE)\s+(\S+)/;
+
 function parseLogEvent(record, mapping) {
   const message = record[mapping.message] || '';
   const tsMs = normalizeTimestamp(record[mapping.timestamp], message);
   const source = record[mapping.source] || '';
   const src = classifySource(source, message);
   const slot = extractInt(message, /slot: (?:Slot\()?(\d+)/);
+  const asJson = tryParseJsonMessage(message);
   const event = {
     tsMs,
     src,
@@ -183,6 +249,9 @@ function parseLogEvent(record, mapping) {
     event.peers = extractInt(message, /Synced peers:\s*"?(\d+)"?/);
     event.current_slot = event.slot;
     event.sync_state = 'Synced';
+    event.epoch = extractInt(message, /[^_]epoch:\s*"?(\d+)"?/);
+    event.finalized_epoch = extractInt(message, /finalized_epoch:\s*"?(\d+)"?/);
+    event.exec_hash = extract(message, /exec_hash:\s*"?(0x[0-9a-fA-F]+)/);
   } else if (message.includes('Successfully verified gossip block')) {
     event.event = 'gossip_verified';
   } else if (message.includes('New block received')) {
@@ -266,6 +335,41 @@ function parseLogEvent(record, mapping) {
   } else if (message.includes('Computed attestation selection proofs')) {
     event.event = 'selection_proofs';
     event.detail = message.slice(0, 220);
+  } else if (asJson && asJson.msg === 'Chain head was updated') {
+    event.event = 'chain_head_updated';
+    event.exec_height = num(asJson.height);
+    event.exec_hash = typeof asJson.hash === 'string' ? asJson.hash : null;
+  } else if (asJson && asJson.msg === 'Imported new potential chain segment') {
+    event.event = 'segment_imported';
+    event.exec_height = num(asJson.height);
+    event.mgas = typeof asJson.mgas === 'number' ? asJson.mgas : null;
+    event.txs = typeof asJson.txs === 'number' ? asJson.txs : null;
+  } else if (HTTP_ACCESS_LOG_RE.test(message)) {
+    const m = message.match(HTTP_ACCESS_LOG_RE);
+    applyHttpRequest(event, m[1], m[2], m[3], m[4]);
+  } else if (HTTP_WARN_RE.test(message)) {
+    const elapsed = extract(message, /elapsed_ms:\s*([0-9.]+)/);
+    event.elapsed_ms = elapsed === null ? null : Number(elapsed);
+    const status = extractInt(message, /status:\s*(\d+)/);
+    const path = extract(message, /path:\s*([^\s,]+)/);
+    const method = extract(message, /method:\s*(\w+)/);
+    applyHttpRequest(event, method || 'GET', path || '', status, null);
+  } else if (HTTP_PLAIN_REQUEST_RE.test(message) && message.includes('/eth/v')) {
+    const m = message.match(HTTP_PLAIN_REQUEST_RE);
+    applyHttpRequest(event, m[1], m[2], null, null);
+  } else if (message.includes('Connected to beacon node')) {
+    event.event = 'vc_connected';
+  } else if (message.includes('Listening for doppelgangers')) {
+    event.event = 'doppelganger_watch';
+  } else if (message.includes('Some validators active')) {
+    event.event = 'validators_active';
+  } else if (message.includes('Completed pruning of slashing protection DB')) {
+    event.event = 'slashing_db_pruned';
+  } else if (message.includes('Published validator registrations to the builder network')) {
+    event.event = 'builder_registration_published';
+  } else if (message.includes('Healthcheck successful') || message.includes('PROBE -> PASS')) {
+    event.event = 'healthcheck';
+    event.sync_hint = message.includes('in-sync') ? 'Synced' : null;
   } else {
     return null;
   }
@@ -351,6 +455,7 @@ function emptyDiagnosticRow(slot, pubkey = '', validatorIndex = null) {
     propagation_delay_ms: null,
     aggregator_picked: null,
     fault_attribution: 'log_preview',
+    slot_source: 'derived',
   };
 }
 
@@ -489,47 +594,33 @@ function buildDiagnosticRows(events) {
         row.fault_attribution = 'vc_head_event_failed';
       }
 
+      row.epoch =
+        maxEventValue(scopedEvents, 'slot_timer', 'epoch') ??
+        maxEventValue(scopedEvents, 'duties_attester_request', 'epoch') ??
+        maxEventValue(scopedEvents, 'duties_proposer_request', 'epoch');
+      row.exec_block_number =
+        maxEventValue(scopedEvents, 'chain_head_updated', 'exec_height') ??
+        maxEventValue(scopedEvents, 'segment_imported', 'exec_height');
+      if (row.committee_index === null) {
+        const attData = scopedEvents.find(e => e.event === 'att_data_request' && e.committee_index !== undefined);
+        if (attData) row.committee_index = attData.committee_index;
+      }
+
+      const blockStatusEvents = scopedEvents.filter(
+        e => e.event === 'beacon_blocks_request' || e.event === 'beacon_headers_request',
+      );
+      if (blockStatusEvents.some(e => e.http_status === 200)) {
+        row.block_on_chain = true;
+      } else if (blockStatusEvents.some(e => e.http_status === 404)) {
+        row.missed = true;
+      }
+
+      row.slot_source = slotEvents.some(e => !e.slot_inferred) ? 'csv' : 'derived';
+
       rows.push(row);
     }
   }
   return rows.sort((a, b) => (b.slot ?? 0) - (a.slot ?? 0));
-}
-
-function isBlank(value) {
-  return value === null || value === undefined || value === '';
-}
-
-function csvMatchesClickhouseRow(csvRow, chRow) {
-  if (Number(csvRow.slot) !== Number(chRow.slot)) return false;
-  if (!isBlank(csvRow.validator_index) && !isBlank(chRow.validator_index)) {
-    return Number(csvRow.validator_index) === Number(chRow.validator_index);
-  }
-  if (!isBlank(csvRow.validator_pubkey) && !isBlank(chRow.validator_pubkey)) {
-    return csvRow.validator_pubkey === chRow.validator_pubkey;
-  }
-  return isBlank(csvRow.validator_index) && isBlank(csvRow.validator_pubkey);
-}
-
-function mergeOneCsvRow(csvRow, clickhouseRows) {
-  const match = clickhouseRows.find(chRow => csvMatchesClickhouseRow(csvRow, chRow));
-  if (!match) return csvRow;
-  const merged = { ...csvRow };
-  for (const [key, value] of Object.entries(match)) {
-    if (isBlank(value)) continue;
-    if (key === 'fault_attribution' && (merged[key] === 'log_preview' || merged[key] === 'unknown' || isBlank(merged[key]))) {
-      merged[key] = value;
-      continue;
-    }
-    if (isBlank(merged[key])) merged[key] = value;
-  }
-  return merged;
-}
-
-export function mergeDiagnosticsRows(clickhouseRows, csvRows) {
-  if (!clickhouseRows.length) return csvRows;
-  return csvRows
-    .map(row => mergeOneCsvRow(row, clickhouseRows))
-    .sort((a, b) => (Number(b.slot) || 0) - (Number(a.slot) || 0));
 }
 
 export function parseDatadogCsv(text, overrides = {}) {
