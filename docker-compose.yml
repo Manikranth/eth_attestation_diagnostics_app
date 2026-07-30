@@ -141,6 +141,23 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # Charts dashboard — http://localhost:8090. One real Plotly chart per table
+  # column, server-rendered in Python (charts/app.py), grouped into the same
+  # sections as the table. Separate service from `web` on purpose.
+  charts:
+    build: ./charts
+    container_name: attmon-charts
+    environment:
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-attmon}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-attmon}
+    ports:
+      - "8090:8090"
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    restart: unless-stopped
+
   # CLI — run on demand:  docker compose run --rm app --last 5
   app:
     build: ./app
