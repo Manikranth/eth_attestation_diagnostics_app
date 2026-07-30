@@ -11,6 +11,93 @@ indexer = __import__("indexer.indexer", fromlist=["indexer"])
 
 
 class ValidatorDiscoveryTest(unittest.TestCase):
+    def test_get_block_facts_records_block_and_blob_sizes(self):
+        block = {
+            "data": {
+                "message": {
+                    "body": {
+                        "execution_payload": {
+                            "block_number": "3309408",
+                            "block_hash": "0xhash",
+                        },
+                        "graffiti": "0x68656c6c6f0000",
+                        "blob_kzg_commitments": ["0x01", "0x02"],
+                    }
+                }
+            }
+        }
+        header = {
+            "data": {
+                "header": {
+                    "message": {
+                        "proposer_index": "44",
+                        "state_root": "0xstate",
+                    }
+                }
+            }
+        }
+        sidecars = {
+            "data": [
+                {"blob": "0x" + ("11" * 4)},
+                {"blob": "0x" + ("22" * 6)},
+            ]
+        }
+
+        def fake_beacon_get(path, ok_404=False):
+            if path == "/eth/v1/beacon/headers/320":
+                return header
+            if path == "/eth/v2/beacon/blocks/320":
+                return block
+            if path == "/eth/v1/beacon/blob_sidecars/320":
+                return sidecars
+            self.fail(f"unexpected beacon_get path {path}")
+
+        with patch.object(indexer, "beacon_get", side_effect=fake_beacon_get), \
+             patch.object(indexer, "beacon_get_bytes", return_value=b"block-bytes"):
+            facts = indexer.get_block_facts(320)
+
+        self.assertEqual(facts["block_size_bytes"], len(b"block-bytes"))
+        self.assertEqual(facts["blob_size_bytes"], 10)
+        self.assertEqual(facts["blob_count"], 2)
+
+    def test_get_block_facts_records_zero_blob_size_for_block_without_blobs(self):
+        header = {
+            "data": {
+                "header": {
+                    "message": {
+                        "proposer_index": "44",
+                        "state_root": "0xstate",
+                    }
+                }
+            }
+        }
+        block = {
+            "data": {
+                "message": {
+                    "body": {
+                        "execution_payload": {"block_number": "3309408"},
+                        "blob_kzg_commitments": [],
+                    }
+                }
+            }
+        }
+
+        def fake_beacon_get(path, ok_404=False):
+            if path == "/eth/v1/beacon/headers/320":
+                return header
+            if path == "/eth/v2/beacon/blocks/320":
+                return block
+            if path == "/eth/v1/beacon/blob_sidecars/320":
+                return {"data": []}
+            self.fail(f"unexpected beacon_get path {path}")
+
+        with patch.object(indexer, "beacon_get", side_effect=fake_beacon_get), \
+             patch.object(indexer, "beacon_get_bytes", return_value=b"block-bytes"):
+            facts = indexer.get_block_facts(320)
+
+        self.assertEqual(facts["blob_count"], 0)
+        self.assertEqual(facts["blob_size_bytes"], 0)
+
     def test_discovers_validators_from_log_pubkeys(self):
         rows = [
             {

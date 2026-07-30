@@ -86,6 +86,15 @@ class DiagnosticsFilterTest(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         self.assertIn("toString(fault_attribution) = 'perfect'", calls[0])
 
+    def test_generic_field_filter_allows_block_and_blob_size_columns(self):
+        calls, _ = self.fetch_diagnostics("?field=block_size_bytes&value=12345")
+        self.assertEqual(len(calls), 1)
+        self.assertIn("toString(block_size_bytes) = '12345'", calls[0])
+
+        calls, _ = self.fetch_diagnostics("?field=blob_size_bytes&value=262144")
+        self.assertEqual(len(calls), 1)
+        self.assertIn("toString(blob_size_bytes) = '262144'", calls[0])
+
     def test_unknown_generic_field_returns_400(self):
         calls, body = self.fetch_diagnostics("?field=not_a_column&value=perfect")
 

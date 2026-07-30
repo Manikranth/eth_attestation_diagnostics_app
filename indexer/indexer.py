@@ -52,6 +52,21 @@ def beacon_get(path, ok_404=False):
     return r.json()
 
 
+def beacon_get_bytes(path, ok_404=False):
+    r = session.get(
+        f"{BEACON_URL}{path}",
+        headers={"Accept": "application/octet-stream"},
+        timeout=60,
+    )
+    if r.status_code == 404 and ok_404:
+        return None
+    r.raise_for_status()
+    content_type = r.headers.get("content-type", "")
+    if "json" in content_type.lower():
+        raise RuntimeError(f"expected octet-stream, got {content_type}")
+    return r.content
+
+
 def ch_query(query, data=None):
     r = requests.post(
         CLICKHOUSE_URL,
@@ -89,6 +104,14 @@ def ensure_schema():
     ch_query(
         "ALTER TABLE attmon.chain_attestations "
         "ADD COLUMN IF NOT EXISTS current_head_exec_block Nullable(UInt64)"
+    )
+    ch_query(
+        "ALTER TABLE attmon.chain_attestations "
+        "ADD COLUMN IF NOT EXISTS block_size_bytes Nullable(UInt64)"
+    )
+    ch_query(
+        "ALTER TABLE attmon.chain_attestations "
+        "ADD COLUMN IF NOT EXISTS blob_size_bytes Nullable(UInt64)"
     )
     ch_query(
         """
@@ -342,6 +365,8 @@ def get_block_facts(slot):
         "state_root": "",
         "graffiti": "",
         "blob_count": None,
+        "block_size_bytes": None,
+        "blob_size_bytes": None,
     }
     hdr = beacon_get(f"/eth/v1/beacon/headers/{slot}", ok_404=True)
     if hdr is None:
@@ -350,6 +375,12 @@ def get_block_facts(slot):
     facts["block_on_chain"] = 1
     facts["proposer_index"] = int(msg["proposer_index"])
     facts["state_root"] = msg["state_root"]
+    try:
+        raw_block = beacon_get_bytes(f"/eth/v2/beacon/blocks/{slot}", ok_404=True)
+        if raw_block is not None:
+            facts["block_size_bytes"] = len(raw_block)
+    except Exception as e:
+        log.warning("block byte-size fetch failed at slot %s (%s)", slot, e)
     try:
         blk = beacon_get(f"/eth/v2/beacon/blocks/{slot}", ok_404=True)
         body = blk["data"]["message"]["body"]
@@ -363,8 +394,20 @@ def get_block_facts(slot):
                 bytes.fromhex(g[2:]).rstrip(b"\x00").decode("utf-8", "replace")
             )
         facts["blob_count"] = len(body.get("blob_kzg_commitments", []))
+        if facts["blob_count"] == 0:
+            facts["blob_size_bytes"] = 0
     except Exception as e:
         log.warning("full block fetch failed at slot %s (%s); header facts only", slot, e)
+    try:
+        sidecars = beacon_get(f"/eth/v1/beacon/blob_sidecars/{slot}", ok_404=True)
+        if sidecars is not None:
+            facts["blob_size_bytes"] = sum(
+                len(item.get("blob", "").removeprefix("0x")) // 2
+                for item in sidecars.get("data", [])
+                if item.get("blob")
+            )
+    except Exception as e:
+        log.warning("blob sidecar size fetch failed at slot %s (%s)", slot, e)
     return facts
 
 

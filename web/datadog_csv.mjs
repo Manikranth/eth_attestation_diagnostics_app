@@ -409,6 +409,8 @@ function emptyDiagnosticRow(slot, pubkey = '', validatorIndex = null) {
     current_head_exec_block: null,
     graffiti: '',
     blob_count: null,
+    block_size_bytes: null,
+    blob_size_bytes: null,
     head_lag_slots: null,
     block_seen_ms: null,
     gossip_late_by_ms: null,

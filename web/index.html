@@ -421,6 +421,7 @@
       <dl>
         <dt>on chain</dt><dd>did a block actually land at your duty slot</dd>
         <dt>exec block# / current head#</dt><dd>the duty-slot block's execution number, and the execution block corresponding to the node's head at the slot tick.</dd>
+        <dt>block size / blob size</dt><dd>serialized beacon block bytes, and total blob-sidecar payload bytes for that duty-slot block.</dd>
         <dt>head lag</dt><dd>how many slots behind your duty slot the block you voted for was. 0 is ideal.</dd>
         <dt>head / tgt / src</dt><dd>were your head, target and source votes correct. <b>–</b> means unknown — the node was still syncing, so we don't guess (this is the fix for the old false ✓).</dd>
         <dt>incl slot / dist</dt><dd>which slot included your vote, and how far after your duty slot that was (1 = ideal).</dd>
@@ -502,7 +503,7 @@
         <th class="groupedge">on chain</th><th>proposer</th><th>exec block#</th>
         <th title="Execution block for the beacon-node head slot at the local slot tick">current head#</th>
         <th title="how many slots behind the duty slot your attested head was (0 = ideal)">head lag</th>
-        <th>blobs</th><th>graffiti</th>
+        <th>blobs</th><th title="serialized beacon block bytes">block size</th><th title="total blob sidecar payload bytes">blob size</th><th>graffiti</th>
         <th class="groupedge" title="did you vote for the correct head block? – = unknown while node syncing">head</th>
         <th title="correct target checkpoint?">tgt</th>
         <th title="correct source checkpoint?">src</th>
@@ -584,6 +585,8 @@ const FIELD_OPTIONS = [
   ['current_head_exec_block', 'current head#'],
   ['head_lag_slots', 'head lag'],
   ['blob_count', 'blobs'],
+  ['block_size_bytes', 'block size'],
+  ['blob_size_bytes', 'blob size'],
   ['graffiti', 'graffiti'],
   ['head_correct', 'head'],
   ['target_correct', 'tgt'],
@@ -630,6 +633,8 @@ const COLUMN_HELP = {
   'current head#': 'Execution block number for the beacon-node head slot at the local slot timer tick. Derived from head@tick, not from a later indexer poll.',
   'head lag': 'Duty slot minus the block slot you voted as head. 0 is ideal; higher means you attested to an older head.',
   'blobs': 'Number of blob KZG commitments in the duty-slot block.',
+  'block size': 'Serialized SSZ byte size of the duty-slot beacon block, fetched from the beacon API octet-stream response.',
+  'blob size': 'Total blob payload bytes across blob sidecars for the duty-slot block. Empty blocks show 0; unavailable sidecars show blank.',
   'graffiti': 'Block graffiti from the proposer, truncated in the table.',
   'head': 'Whether your attested head root matched the canonical head for the duty slot. Dash means unknown while syncing.',
   'tgt': 'Whether your target checkpoint vote was correct.',
@@ -738,6 +743,17 @@ const numCell = (v, edge, cls) => {
   if (v === null || v === undefined) return `<td class="dim${edge ? ' groupedge' : ''}">–</td>`;
   return `<td class="${cls || ''}${edge ? ' groupedge' : ''}">${v}</td>`;
 };
+const fmtBytes = v => {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return '–';
+  if (n >= 1024 * 1024) return (n / (1024 * 1024)).toFixed(2) + ' MiB';
+  if (n >= 1024) return (n / 1024).toFixed(1) + ' KiB';
+  return n + ' B';
+};
+const bytesCell = (v, edge) => {
+  if (v === null || v === undefined) return `<td class="dim${edge ? ' groupedge' : ''}">–</td>`;
+  return `<td class="${edge ? ' groupedge' : ''}" title="${Number(v).toLocaleString()} bytes">${fmtBytes(v)}</td>`;
+};
 const txtCell = (v, edge, max) => {
   if (!v) return `<td class="dim${edge ? ' groupedge' : ''}">–</td>`;
   const t = String(v).slice(0, max || 14);
@@ -776,7 +792,7 @@ function renderRows(rows) {
       numCell(r.proposer_index) + numCell(r.exec_block_number) +
       numCell(r.current_head_exec_block) +
       numCell(headLag, false, headLag === null ? '' : headLag <= 1 ? 'ok' : 'warn') +
-      numCell(r.blob_count) + txtCell(r.graffiti) +
+      numCell(r.blob_count) + bytesCell(r.block_size_bytes) + bytesCell(r.blob_size_bytes) + txtCell(r.graffiti) +
       // VOTES
       boolCell(r.head_correct, false, true) +
       boolCell(r.target_correct) + boolCell(r.source_correct) +

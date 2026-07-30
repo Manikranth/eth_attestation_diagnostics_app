@@ -90,6 +90,8 @@ gaps intended to be compared or summed.
 | `exec block#` | beacon API | Execution-layer block number for the duty-slot block. |
 | `current head#` | Lighthouse logs + beacon API | Execution-layer block number for the beacon node's `head@tick` slot. Blank when the slot-timer head cannot be mapped to an indexed block. |
 | `blobs` | beacon API | Number of blob KZG commitments in the duty-slot block. |
+| `block size` | beacon API | Serialized SSZ byte size of the duty-slot beacon block. |
+| `blob size` | beacon API | Total blob payload bytes across blob sidecars for the duty-slot block. |
 | `graffiti` | beacon API | Block graffiti, truncated in the UI. |
 | `cmte` | beacon API | Attestation committee index. |
 | `pos` | beacon API | Validator position inside that committee. |

@@ -32,7 +32,7 @@ FIELD_FILTER_COLUMNS = {
     "epoch", "slot", "slot_start_utc", "validator_index", "validator_name",
     "validator_pubkey", "block_on_chain", "proposer_index",
     "exec_block_number", "current_head_exec_block", "head_lag_slots",
-    "blob_count", "graffiti", "head_correct", "target_correct",
+    "blob_count", "block_size_bytes", "blob_size_bytes", "graffiti", "head_correct", "target_correct",
     "source_correct", "inclusion_slot", "inclusion_distance", "missed",
     "head_slot_at_tick", "node_behind_slots", "sync_state", "available_ms",
     "avail_dur_ms", "block_seen_ms", "gossip_late_by_ms", "proc_start_ms",

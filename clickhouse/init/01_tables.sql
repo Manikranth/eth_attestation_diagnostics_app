@@ -37,6 +37,8 @@ CREATE TABLE IF NOT EXISTS attmon.chain_attestations
     state_root            String DEFAULT '',
     graffiti              String DEFAULT '',
     blob_count            Nullable(UInt32),     -- kzg commitments in the block
+    block_size_bytes      Nullable(UInt64),     -- SSZ bytes for the duty-slot beacon block
+    blob_size_bytes       Nullable(UInt64),     -- total bytes across blob sidecars for the block
     -- attestation propagation facts derivable without a p2p sentry
     subnet_id             Nullable(UInt32),     -- deterministic from (slot, committee)
     committee_size        Nullable(UInt32),
@@ -53,6 +55,10 @@ ALTER TABLE attmon.chain_attestations
     ADD COLUMN IF NOT EXISTS validator_name String DEFAULT '';
 ALTER TABLE attmon.chain_attestations
     ADD COLUMN IF NOT EXISTS current_head_exec_block Nullable(UInt64);
+ALTER TABLE attmon.chain_attestations
+    ADD COLUMN IF NOT EXISTS block_size_bytes Nullable(UInt64);
+ALTER TABLE attmon.chain_attestations
+    ADD COLUMN IF NOT EXISTS blob_size_bytes Nullable(UInt64);
 -- Existing volumes: convert the vote verdicts to Nullable in place so the
 -- indexer can write NULL "unknown-while-syncing" verdicts (see CREATE above).
 ALTER TABLE attmon.chain_attestations
@@ -302,6 +308,8 @@ SELECT
     h.head_exec_block       AS current_head_exec_block,
     c.graffiti              AS graffiti,
     c.blob_count            AS blob_count,
+    c.block_size_bytes      AS block_size_bytes,
+    c.blob_size_bytes       AS blob_size_bytes,
     c.head_lag_slots        AS head_lag_slots,
     -- BLOCK TIMELINE: points in time, ms after slot start. These are wall
     -- clock OFFSETS, not durations — stages run in parallel (getBlobs fires
