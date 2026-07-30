@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS attmon.chain_attestations
     -- surfaces as a confident wrong ✓/✗. Re-evaluated once the node is trusted.
     head_correct          Nullable(UInt8),
     target_correct        Nullable(UInt8),
-    source_correct        UInt8,
+    source_correct        Nullable(UInt8),
     inclusion_slot        Nullable(UInt64),
     inclusion_distance    Nullable(UInt64),
     included_in_aggregate UInt8,
@@ -65,6 +65,8 @@ ALTER TABLE attmon.chain_attestations
     MODIFY COLUMN head_correct Nullable(UInt8);
 ALTER TABLE attmon.chain_attestations
     MODIFY COLUMN target_correct Nullable(UInt8);
+ALTER TABLE attmon.chain_attestations
+    MODIFY COLUMN source_correct Nullable(UInt8);
 
 -- Layer 2: per-event node internals parsed from Lighthouse beacon + validator
 -- client debug logs (Vector writes here). One row per log line of interest;

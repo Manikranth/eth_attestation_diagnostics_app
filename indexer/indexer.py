@@ -294,14 +294,13 @@ def node_is_optimistic():
 
 
 def get_target_epoch():
-    """Newest epoch that can be fully judged: attestations for epoch E are
-    includible through the end of epoch E+1, so E is closed once the node's
-    head reaches E+2. Head-based, not finality-based — keeps the monitor
-    ~2 epochs behind the chain instead of finality-lag + node-sync-lag.
-    Tiny reorg risk on non-finalized epochs is acceptable for monitoring."""
-    hdr = beacon_get("/eth/v1/beacon/headers/head")
-    head_slot = int(hdr["data"]["header"]["message"]["slot"])
-    return head_slot // SLOTS_PER_EPOCH - 2
+    """Newest epoch whose full inclusion window is finalized.
+
+    Attestations for epoch E can be included through epoch E+1. We only judge E
+    once finalized_epoch >= E+2, so included/missed and vote verdicts are based
+    on finalized canonical chain data rather than a still-reorgable head view.
+    """
+    return get_finalized_epoch() - 2
 
 
 def get_committees(epoch):
@@ -430,6 +429,20 @@ def canonical_root_at(slot, floor_slot=0):
     return ""
 
 
+def source_checkpoint_for_slot(slot):
+    """Expected source checkpoint for an attestation produced at `slot`.
+
+    This is read from the canonical state finality checkpoints instead of being
+    inferred from inclusion. Returns (epoch, root), or None if the historical
+    state is unavailable.
+    """
+    resp = beacon_get(f"/eth/v1/beacon/states/{slot}/finality_checkpoints", ok_404=True)
+    if resp is None:
+        return None
+    source = resp["data"]["current_justified"]
+    return int(source["epoch"]), source["root"]
+
+
 # --- Epoch processing -----------------------------------------------------
 
 def process_epoch(epoch, genesis_time, validators, trustworthy=True):
@@ -452,6 +465,7 @@ def process_epoch(epoch, genesis_time, validators, trustworthy=True):
     # Attestations for slot S may be included in any block up to the end of
     # epoch(S)+1 (EIP-7045). Fetch blocks lazily, cache per inclusion slot.
     block_cache = {}
+    source_checkpoint_cache = {}
 
     rows = []
     for vidx, (duty_slot, ci, pos) in duties.items():
@@ -498,6 +512,9 @@ def process_epoch(epoch, genesis_time, validators, trustworthy=True):
             incl_slot, att = found
             data = att["data"]
             attested_head_slot = slot_of_root(data["beacon_block_root"])
+            if duty_slot not in source_checkpoint_cache:
+                source_checkpoint_cache[duty_slot] = source_checkpoint_for_slot(duty_slot)
+            expected_source = source_checkpoint_cache[duty_slot]
             row.update(
                 attested_head_root=data["beacon_block_root"],
                 attested_target_root=data["target"]["root"],
@@ -508,8 +525,17 @@ def process_epoch(epoch, genesis_time, validators, trustworthy=True):
                 head_correct=int(data["beacon_block_root"] == canonical_head)
                 if (trustworthy and canonical_head)
                 else None,
-                target_correct=int(data["target"]["root"] == canonical_target)
+                target_correct=int(
+                    int(data["target"]["epoch"]) == epoch
+                    and data["target"]["root"] == canonical_target
+                )
                 if (trustworthy and canonical_target)
+                else None,
+                source_correct=int(
+                    int(data["source"]["epoch"]) == expected_source[0]
+                    and data["source"]["root"] == expected_source[1]
+                )
+                if (trustworthy and expected_source)
                 else None,
                 # how many slots behind the duty slot the attested head was
                 head_lag_slots=(duty_slot - attested_head_slot)
@@ -517,10 +543,6 @@ def process_epoch(epoch, genesis_time, validators, trustworthy=True):
                 else None,
                 # participants in the aggregate that carried our vote
                 agg_bits_set=count_set_bits(att["aggregation_bits"]),
-                # Consensus rules reject attestations whose source vote doesn't
-                # match the state's justified checkpoint, so inclusion in a
-                # block proves the source vote was correct.
-                source_correct=1,
                 inclusion_slot=incl_slot,
                 inclusion_distance=incl_slot - duty_slot,
                 included_in_aggregate=1,
@@ -571,7 +593,7 @@ def last_processed_epoch(validators):
 
 
 def unresolved_verdict_epochs(validators, floor_epoch):
-    """Recent epochs whose head verdict is still NULL — written while the node
+    """Recent epochs whose vote verdict is still NULL — written while the node
     was syncing/optimistic. Reprocessed once the node is trusted so they
     self-heal into a real ✓/✗ instead of staying '–' forever."""
     if not validators:
@@ -580,7 +602,8 @@ def unresolved_verdict_epochs(validators, floor_epoch):
     txt = ch_query(
         "SELECT DISTINCT epoch FROM attmon.chain_attestations "
         f"WHERE validator_index IN ({','.join(map(str, validators))}) "
-        f"AND head_correct IS NULL AND epoch >= {floor}"
+        "AND (head_correct IS NULL OR target_correct IS NULL OR source_correct IS NULL) "
+        f"AND epoch >= {floor}"
     ).strip()
     return [int(x) for x in txt.split() if x]
 
@@ -599,6 +622,10 @@ def main():
                 continue
             log.info("monitoring validators from logs: %s", sorted(validators))
             target = get_target_epoch()
+            if target < 0:
+                log.info("finalized epoch is below 2; waiting for a complete inclusion window")
+                time.sleep(POLL_SECONDS)
+                continue
             trustworthy = not node_is_optimistic()
             done = last_processed_epoch(validators)
             start_new = (done + 1) if done else max(target - BACKFILL_EPOCHS + 1, 0)

@@ -95,9 +95,9 @@ gaps intended to be compared or summed.
 | `graffiti` | beacon API | Block graffiti, truncated in the UI. |
 | `cmte` | beacon API | Attestation committee index. |
 | `pos` | beacon API | Validator position inside that committee. |
-| `head` | chain indexer | Whether the attested head root matched the canonical head for the duty slot; `–` means unknown while syncing. |
-| `tgt` | chain indexer | Whether the target checkpoint vote was correct; `–` means unknown while syncing. |
-| `src` | chain indexer | Whether the source checkpoint vote was correct. Included attestations prove source correctness. |
+| `head` | finalized beacon API | Whether the included attestation head root matched the finalized canonical head for the duty slot; `–` means unknown while syncing or unavailable. |
+| `tgt` | finalized beacon API | Whether the included attestation target checkpoint matched the finalized canonical target checkpoint. |
+| `src` | finalized beacon API | Whether the included attestation source checkpoint matched the finalized state's justified checkpoint. |
 | `head lag` | chain indexer | Duty slot minus the slot of the block root you attested to. `0` is ideal. |
 | `incl slot` | chain indexer | Slot where the attestation was included on chain. |
 | `dist` | chain indexer | Inclusion distance: `incl slot - duty slot`. `1` is ideal. |

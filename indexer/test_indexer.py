@@ -3,6 +3,7 @@ from unittest.mock import patch
 import sys
 import types
 from unittest.mock import mock_open
+import json
 
 requests_stub = types.SimpleNamespace(Session=lambda: types.SimpleNamespace())
 sys.modules.setdefault("requests", requests_stub)
@@ -161,6 +162,43 @@ class ValidatorDiscoveryTest(unittest.TestCase):
         self.assertIn('"validator_pubkey": "0x22"', payload[0])
         self.assertIn('"validator_name": "validator-22"', payload[0])
         self.assertIn('"validator_index": 33', payload[1])
+
+    def test_target_epoch_waits_for_inclusion_window_finality(self):
+        with patch.object(indexer, "get_finalized_epoch", return_value=42):
+            self.assertEqual(indexer.get_target_epoch(), 40)
+
+    def test_process_epoch_validates_source_against_finalized_state_checkpoint(self):
+        validators = {
+            22: {"pubkey": "0x22", "name": "validator-22"},
+        }
+        committees = {
+            321: {7: [22, 44]},
+        }
+        attestation = {
+            "aggregation_bits": "0x03",
+            "data": {
+                "slot": "321",
+                "index": "7",
+                "beacon_block_root": "0xhead",
+                "target": {"epoch": "10", "root": "0xtarget"},
+                "source": {"epoch": "9", "root": "0xwrongsource"},
+            },
+        }
+
+        with patch.object(indexer, "get_committees", return_value=committees), \
+             patch.object(indexer, "canonical_root_at", side_effect=lambda slot, floor_slot=0: "0xtarget" if slot == 320 else "0xhead"), \
+             patch.object(indexer, "get_block_attestations", return_value=[attestation]), \
+             patch.object(indexer, "get_block_facts", return_value={}), \
+             patch.object(indexer, "slot_of_root", return_value=321), \
+             patch.object(indexer, "source_checkpoint_for_slot", return_value=("9", "0xexpectedsource")), \
+             patch.object(indexer, "ch_query") as ch_query:
+            count = indexer.process_epoch(10, 0, validators)
+
+        self.assertEqual(count, 1)
+        row = json.loads(ch_query.call_args.kwargs["data"])
+        self.assertEqual(row["head_correct"], 1)
+        self.assertEqual(row["target_correct"], 1)
+        self.assertEqual(row["source_correct"], 0)
 
     def test_process_epoch_does_not_store_batch_head_as_slot_head(self):
         validators = {
