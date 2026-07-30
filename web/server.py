@@ -15,6 +15,10 @@ CLICKHOUSE_URL = os.environ.get("CLICKHOUSE_URL", "http://clickhouse:8123")
 CH_USER = os.environ.get("CLICKHOUSE_USER", "attmon")
 CH_PASSWORD = os.environ.get("CLICKHOUSE_PASSWORD", "attmon")
 PORT = int(os.environ.get("PORT", "8080"))
+# Charts service is internal-only (no host port published) — the browser only
+# ever talks to :8080, this box fetches the charts page server-side and
+# re-serves it under /charts so it can sit in an iframe on the same origin.
+CHARTS_URL = os.environ.get("CHARTS_URL", "http://charts:8090")
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -241,6 +245,13 @@ class Handler(BaseHTTPRequestHandler):
         elif parsed.path == "/datadog_csv.mjs":
             with open(os.path.join(HERE, "datadog_csv.mjs"), "rb") as f:
                 self._send(200, f.read(), "text/javascript; charset=utf-8")
+        elif parsed.path == "/charts":
+            url = CHARTS_URL + "/?" + parsed.query
+            try:
+                with urllib.request.urlopen(url, timeout=25) as resp:
+                    self._send(200, resp.read(), "text/html; charset=utf-8")
+            except Exception as e:
+                self._send(502, f"charts service unavailable: {e}".encode(), "text/plain")
         else:
             self._send(404, b"not found", "text/plain")
 
